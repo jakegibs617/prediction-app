@@ -34,10 +34,10 @@ GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 # Queries targeting market-relevant global events
 # Kept narrow to avoid burning the rate limit on irrelevant articles
 GDELT_QUERIES: list[str] = [
-    "bitcoin OR ethereum OR cryptocurrency market",
-    '"stock market" OR "S&P 500" OR "Federal Reserve" OR "interest rates"',
-    '"oil price" OR "crude oil" OR "natural gas" OR gold OR silver',
-    '"trade war" OR sanctions OR "supply chain" OR recession',
+    '(bitcoin OR ethereum OR cryptocurrency OR "digital asset")',
+    '("stock market" OR "S&P 500" OR "Federal Reserve" OR "interest rates")',
+    '("oil price" OR "crude oil" OR "natural gas" OR gold OR silver)',
+    '("trade war" OR sanctions OR "supply chain" OR recession)',
 ]
 
 # GDELT seendate format
