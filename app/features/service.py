@@ -1,22 +1,64 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timezone
 from uuid import UUID, uuid4
 
 from app.db.pool import get_pool
 from app.features.engine import PriceBar, build_price_feature_snapshot
-from app.predictions.contracts import FeatureSnapshot
+from app.predictions.contracts import FeatureSnapshot, FeatureValue
 from app.utils.time import get_utc_now
 
 FEATURE_SET_NAME = "price-baseline"
 FEATURE_SET_VERSION = "v1"
+
+# Macro features attached to each price-feature snapshot, keyed by asset_type.
+# Each entry: (source_name, [(series_id, feature_key), ...]).
+# feature_key gets a 'macro__' prefix so it sorts together in the prompt and
+# is unmistakably a macro feature, not a price-derived one.
+_MACRO_FEATURE_ROUTES: dict[str, list[tuple[str, list[tuple[str, str]]]]] = {
+    "crypto": [
+        ("alternative_me_fear_greed", [("FEAR_GREED", "macro__fear_greed_index")]),
+        ("fred", [
+            ("FEDFUNDS", "macro__fed_funds_rate"),
+            ("DGS10", "macro__treasury_10y_yield"),
+        ]),
+    ],
+    "equity": [
+        ("fred", [
+            ("FEDFUNDS", "macro__fed_funds_rate"),
+            ("DGS10", "macro__treasury_10y_yield"),
+            ("T10YIE", "macro__breakeven_inflation_10y"),
+            ("UNRATE", "macro__unemployment_rate"),
+        ]),
+    ],
+    "commodity": [
+        ("eia", [
+            ("RWTC", "macro__wti_crude_spot_usd"),
+            ("WCESTUS1", "macro__crude_inventory_kbbl"),
+            ("WGTSTUS1", "macro__gasoline_inventory_kbbl"),
+            ("NW2_EPG0_SWO_R48_BCF", "macro__natgas_storage_bcf"),
+        ]),
+        ("fred", [
+            ("DCOILWTICO", "macro__wti_crude_fred"),
+            ("DGS10", "macro__treasury_10y_yield"),
+        ]),
+    ],
+    "forex": [
+        ("fred", [
+            ("FEDFUNDS", "macro__fed_funds_rate"),
+            ("DGS10", "macro__treasury_10y_yield"),
+            ("T10YIE", "macro__breakeven_inflation_10y"),
+        ]),
+    ],
+}
 
 
 @dataclass(frozen=True)
 class FeatureCandidate:
     asset_id: UUID
     asset_symbol: str
+    asset_type: str = ""
 
 
 async def get_or_create_feature_set() -> UUID:
@@ -51,13 +93,28 @@ async def read_feature_candidates() -> list[FeatureCandidate]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, symbol
+            SELECT id, symbol, asset_type
             FROM market_data.assets
             WHERE is_active = true
             ORDER BY created_at ASC
             """
         )
-    return [FeatureCandidate(asset_id=row["id"], asset_symbol=row["symbol"]) for row in rows]
+    candidates: list[FeatureCandidate] = []
+    for row in rows:
+        # row may be a real asyncpg.Record or a dict from a test fixture; use a
+        # lookup that works for both and tolerates a missing asset_type.
+        try:
+            asset_type_val = row["asset_type"] or ""
+        except (KeyError, TypeError):
+            asset_type_val = ""
+        candidates.append(
+            FeatureCandidate(
+                asset_id=row["id"],
+                asset_symbol=row["symbol"],
+                asset_type=asset_type_val,
+            )
+        )
+    return candidates
 
 
 async def read_price_bars(asset_id: UUID, cutoff_time) -> list[PriceBar]:
@@ -209,6 +266,77 @@ async def write_feature_lineage(snapshot: FeatureSnapshot) -> None:
         )
 
 
+async def read_macro_feature_inputs(asset_type: str, cutoff_time) -> list[dict]:
+    """Pull the most recent released macro observation for each (source,
+    series) routed for this asset_type. cutoff_time enforces no-lookahead:
+    we only consider observations whose released_at is on or before now.
+
+    Returns a list of dicts with feature_key, value (float), source_record_id,
+    available_at (datetime), source_name, series_id.
+    """
+    routes = _MACRO_FEATURE_ROUTES.get(asset_type, [])
+    if not routes:
+        return []
+
+    pool = get_pool()
+    out: list[dict] = []
+    async with pool.acquire() as conn:
+        for source_name, series_pairs in routes:
+            for series_id, feature_key in series_pairs:
+                row = await conn.fetchrow(
+                    """
+                    SELECT r.id                                AS source_record_id,
+                           r.raw_payload->>'value'             AS value_text,
+                           COALESCE(r.released_at, r.source_recorded_at) AS available_at
+                    FROM ingestion.raw_source_records r
+                    JOIN ops.api_sources s ON s.id = r.source_id
+                    WHERE s.name = $1
+                      AND r.raw_payload->>'series_id' = $2
+                      AND COALESCE(r.released_at, r.source_recorded_at) <= $3
+                    ORDER BY COALESCE(r.released_at, r.source_recorded_at) DESC
+                    LIMIT 1
+                    """,
+                    source_name,
+                    series_id,
+                    cutoff_time,
+                )
+                if row is None:
+                    continue
+                value_text = row["value_text"]
+                if value_text in (None, "", "."):
+                    continue
+                try:
+                    value_float = float(value_text)
+                except (TypeError, ValueError):
+                    continue
+                out.append({
+                    "feature_key": feature_key,
+                    "numeric_value": value_float,
+                    "source_record_id": row["source_record_id"],
+                    "available_at": row["available_at"],
+                    "source_name": source_name,
+                    "series_id": series_id,
+                })
+    return out
+
+
+def build_macro_feature_values(macro_inputs: list[dict]) -> list[FeatureValue]:
+    """Convert macro_inputs (from read_macro_feature_inputs) into FeatureValue
+    objects ready to merge into a snapshot."""
+    out: list[FeatureValue] = []
+    for m in macro_inputs:
+        out.append(
+            FeatureValue(
+                feature_key=m["feature_key"],
+                feature_type="numeric",
+                numeric_value=m["numeric_value"],
+                available_at=m["available_at"],
+                source_record_ids=[m["source_record_id"]],
+            )
+        )
+    return out
+
+
 async def generate_features_for_asset(candidate: FeatureCandidate, *, as_of_at=None) -> FeatureSnapshot | None:
     cutoff_time = as_of_at or get_utc_now()
     feature_set_id = await get_or_create_feature_set()
@@ -226,6 +354,23 @@ async def generate_features_for_asset(candidate: FeatureCandidate, *, as_of_at=N
         price_bars=price_bars,
         feature_set_name=f"{FEATURE_SET_NAME}-{FEATURE_SET_VERSION}",
     )
+
+    # Splice macro features in, routed by asset_type. They share the same
+    # snapshot_id and lineage machinery as price features.
+    if candidate.asset_type:
+        macro_inputs = await read_macro_feature_inputs(candidate.asset_type, cutoff_time)
+        if macro_inputs:
+            macro_values = build_macro_feature_values(macro_inputs)
+            merged = list(snapshot.values) + macro_values
+            snapshot = FeatureSnapshot(
+                snapshot_id=snapshot.snapshot_id,
+                asset_id=snapshot.asset_id,
+                asset_symbol=snapshot.asset_symbol,
+                as_of_at=snapshot.as_of_at,
+                feature_set_name=snapshot.feature_set_name,
+                values=sorted(merged, key=lambda v: v.feature_key),
+            )
+
     await write_feature_snapshot(snapshot, feature_set_id=feature_set_id)
     await write_feature_values(snapshot)
     await write_feature_lineage(snapshot)
