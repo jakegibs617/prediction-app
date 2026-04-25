@@ -134,9 +134,11 @@ class EiaConnector(BaseConnector):
     @staticmethod
     def _parse_period(period: str, frequency: str) -> datetime:
         """EIA periods are 'YYYY-MM-DD' for daily/weekly and 'YYYY-MM' for monthly."""
-        if len(period) == 7:
+        if frequency in ("daily", "weekly"):
+            return datetime.strptime(period, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        if frequency == "monthly":
             return datetime.strptime(period, "%Y-%m").replace(tzinfo=timezone.utc)
-        return datetime.strptime(period, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        raise ValueError(f"Unsupported EIA frequency: {frequency!r}")
 
     async def run(self) -> None:
         job_id = await acquire_job_lock(

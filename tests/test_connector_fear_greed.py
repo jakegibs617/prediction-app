@@ -31,9 +31,6 @@ class _FakeAsyncClient:
         self._body = body
         self.calls: list[tuple[str, dict]] = []
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        return super().__init_subclass__(**kwargs)
-
     async def __aenter__(self) -> "_FakeAsyncClient":
         return self
 

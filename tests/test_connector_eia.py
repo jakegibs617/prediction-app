@@ -120,6 +120,13 @@ def test_parse_period_daily_and_monthly() -> None:
     assert eia.EiaConnector._parse_period("2026-04", "monthly").month == 4
 
 
+def test_parse_period_raises_on_unsupported_frequency() -> None:
+    with pytest.raises(ValueError, match="Unsupported EIA frequency"):
+        eia.EiaConnector._parse_period("2026", "annual")
+    with pytest.raises(ValueError, match="Unsupported EIA frequency"):
+        eia.EiaConnector._parse_period("2026-Q1", "quarterly")
+
+
 def test_routes_have_distinct_series_ids() -> None:
     series_ids = [r.series_id for r in eia.TRACKED_ROUTES]
     assert len(series_ids) == len(set(series_ids)), "duplicate series_id in TRACKED_ROUTES"
