@@ -5,15 +5,17 @@ from app.logging import configure_logging
 from app.db.pool import init_pool, close_pool, get_pool
 from app.connectors.alpha_vantage import AlphaVantageConnector
 from app.connectors.coingecko import CoinGeckoConnector
+from app.connectors.fear_greed import FearGreedConnector
 from app.connectors.fred import FredConnector
-from app.connectors.newsapi import NewsApiConnector
 from app.connectors.gdelt import GdeltConnector
+from app.connectors.newsapi import NewsApiConnector
 from app.connectors.usgs import UsgsConnector
 
 log = structlog.get_logger(__name__)
 
 CONNECTORS = [
     ("CoinGecko", CoinGeckoConnector),
+    ("FearGreed", FearGreedConnector),
     ("GDELT", GdeltConnector),
     ("USGS", UsgsConnector),
     ("FRED", FredConnector),
