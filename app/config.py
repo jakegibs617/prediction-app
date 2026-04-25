@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     alpha_vantage_api_key: str = ""
     coingecko_api_key: str = ""
     fred_api_key: str = ""
+    eia_api_key: str = ""
     news_api_key: str = ""
     sec_edgar_user_agent: str = ""
     noaa_user_agent: str = ""
