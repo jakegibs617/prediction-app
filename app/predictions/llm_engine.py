@@ -399,6 +399,7 @@ async def generate_llm_prediction_input(
         correlation_id=correlation_id,
         rationale={
             "feature_count": len(snapshot.values),
+            "macro_feature_count": sum(1 for v in snapshot.values if v.feature_key.startswith("macro__")),
             "event_count": len(events),
             "macro_count": len(macro_rows),
             "features_omitted": 0,
