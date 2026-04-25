@@ -122,6 +122,7 @@ def _check_evidence_grounding(
     *,
     target=None,
     events: list[dict] | None = None,
+    macro_rows: list[dict] | None = None,
 ) -> bool:
     """Flag if the evidence mentions numbers that aren't grounded in the
     inputs: feature snapshot, target rule, or the events block.
@@ -157,6 +158,16 @@ def _check_evidence_grounding(
             except (TypeError, ValueError):
                 continue
 
+    # Macro context numeric values shown in the prompt
+    for m in (macro_rows or []):
+        val = m.get("value")
+        if val is None:
+            continue
+        try:
+            grounded.update(_numeric_variants(float(val)))
+        except (TypeError, ValueError):
+            continue
+
     # Anything 1-2 chars (e.g. '0', '5', '24') is too low-signal to flag
     suspicious = [
         n for n in numeric_in_evidence
@@ -166,6 +177,97 @@ def _check_evidence_grounding(
         log.warning("evidence_grounding_suspicious", suspicious_values=suspicious)
         return True
     return False
+
+
+# Macro context: which sources matter for which asset_type. Each entry is a
+# (source_name, list of series_ids to include). Series_ids must match the
+# raw_payload->>'series_id' value written by each connector.
+_MACRO_CONTEXT_BY_ASSET_TYPE: dict[str, list[tuple[str, list[str]]]] = {
+    "crypto": [
+        ("alternative_me_fear_greed", ["FEAR_GREED"]),
+        ("fred", ["FEDFUNDS", "DGS10"]),
+    ],
+    "equity": [
+        ("fred", ["FEDFUNDS", "DGS10", "T10YIE", "UNRATE"]),
+    ],
+    "commodity": [
+        ("eia", ["RWTC", "WCESTUS1", "WGTSTUS1", "NW2_EPG0_SWO_R48_BCF"]),
+        ("fred", ["DCOILWTICO", "DGS10"]),
+    ],
+    "forex": [
+        ("fred", ["FEDFUNDS", "DGS10", "T10YIE"]),
+    ],
+}
+
+
+async def fetch_macro_context(asset_type: str) -> list[dict]:
+    """Pull the most recent observation for each macro series associated with
+    this asset_type. Returns a flat list of dicts with series_id, value,
+    units, observation_date, source_name, series_name.
+
+    Anti-lookahead: we order by `source_recorded_at DESC` so the latest
+    *released* value wins. The connectors set source_recorded_at to the
+    observation period end, which is also the release date for these series.
+    """
+    routes = _MACRO_CONTEXT_BY_ASSET_TYPE.get(asset_type, [])
+    if not routes:
+        return []
+
+    pool = get_pool()
+    out: list[dict] = []
+    async with pool.acquire() as conn:
+        for source_name, series_ids in routes:
+            for series_id in series_ids:
+                row = await conn.fetchrow(
+                    """
+                    SELECT r.raw_payload->>'series_id'         AS series_id,
+                           r.raw_payload->>'series_name'       AS series_name,
+                           r.raw_payload->>'subtype'           AS subtype,
+                           r.raw_payload->>'observation_date'  AS observation_date,
+                           r.raw_payload->>'value'             AS value,
+                           r.raw_payload->>'units'             AS units,
+                           r.raw_payload->>'value_classification' AS classification,
+                           s.name                              AS source_name
+                    FROM ingestion.raw_source_records r
+                    JOIN ops.api_sources s ON s.id = r.source_id
+                    WHERE s.name = $1
+                      AND r.raw_payload->>'series_id' = $2
+                    ORDER BY r.source_recorded_at DESC
+                    LIMIT 1
+                    """,
+                    source_name,
+                    series_id,
+                )
+                if row is None:
+                    continue
+                out.append(dict(row))
+    return out
+
+
+def _build_macro_block(macro_rows: list[dict]) -> str:
+    if not macro_rows:
+        return "No macro context available for this asset type."
+    lines: list[str] = []
+    for row in macro_rows:
+        value = row.get("value")
+        if value is None:
+            continue
+        try:
+            value_float = float(value)
+            value_str = f"{value_float:.4f}"
+        except (TypeError, ValueError):
+            value_str = str(value)
+        units = row.get("units") or ""
+        units_str = f" {units}" if units else ""
+        date = row.get("observation_date") or ""
+        classification = row.get("classification")
+        name = row.get("series_name") or row.get("series_id")
+        suffix = f"  [{classification}]" if classification else ""
+        lines.append(
+            f"  [{row.get('source_name')}/{row.get('series_id')}] {name}: "
+            f"{value_str}{units_str} (as of {date}){suffix}"
+        )
+    return "\n".join(lines) if lines else "No macro context available for this asset type."
 
 
 async def fetch_relevant_events(asset_type: str, asset_symbol: str, limit: int = 15) -> list[dict]:
@@ -244,14 +346,17 @@ async def generate_llm_prediction_input(
     prediction_mode: str = "live",
 ) -> PredictionInput:
     events = await fetch_relevant_events(asset_type, snapshot.asset_symbol)
+    macro_rows = await fetch_macro_context(asset_type)
 
     feature_block = _build_feature_block(snapshot)
     target_block = _build_target_block(target)
     events_block = _build_events_block(events)
+    macro_block = _build_macro_block(macro_rows)
 
     user_message = (
         f"=== PREDICTION TARGET ===\n{target_block}\n\n"
         f"=== FEATURE DATA (use ONLY these numbers) ===\n{feature_block}\n\n"
+        f"=== MACRO CONTEXT (latest released values) ===\n{macro_block}\n\n"
         f"=== RELEVANT RECENT EVENTS ===\n{events_block}\n\n"
         "Generate a probability estimate and evidence summary for this prediction target."
     )
@@ -266,7 +371,7 @@ async def generate_llm_prediction_input(
     probability = max(0.05, min(0.95, output.probability))
     probability_extreme = probability < 0.05 or probability > 0.95
     hallucination_risk = output.hallucination_risk or _check_evidence_grounding(
-        output.evidence_summary, snapshot, target=target, events=events
+        output.evidence_summary, snapshot, target=target, events=events, macro_rows=macro_rows
     )
 
     log.info(
@@ -296,6 +401,7 @@ async def generate_llm_prediction_input(
             "feature_count": len(snapshot.values),
             "macro_feature_count": sum(1 for v in snapshot.values if v.feature_key.startswith("macro__")),
             "event_count": len(events),
+            "macro_count": len(macro_rows),
             "features_omitted": 0,
             "compression_type": None,
             "evidence_grounding_ok": not hallucination_risk,
