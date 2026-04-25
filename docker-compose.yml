@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: prediction-app-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-experimental_prediction_app}
+      POSTGRES_USER: ${POSTGRES_USER:-prediction_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prediction_app_local}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/001_init_experimental_prediction_app.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+      - ./sql/002_pending_migrations.sql:/docker-entrypoint-initdb.d/002_migrations.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build:
+      context: .
+    container_name: prediction-app-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      LOG_TO_STDOUT: "true"
+    command: ["prediction-app", "schedule", "--mode", "stages"]
+    volumes:
+      - ./logs:/app/logs
+
+volumes:
+  postgres_data:

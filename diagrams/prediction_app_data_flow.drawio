@@ -1,0 +1,237 @@
+<mxfile host="app.diagrams.net" modified="2026-04-18T12:00:00.000Z" agent="Codex" version="24.7.17">
+  <diagram id="data-flow-1" name="Prediction App Data Flow">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2000" pageHeight="1400" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Row 1: External data ingestion pipeline -->
+        <mxCell id="2" value="Public APIs&#xa;GDELT, NewsAPI, FRED, EIA,&#xa;SEC EDGAR, CoinGecko, Alpha Vantage" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="100" width="220" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="3" value="Source Connectors&#xa;Fetch, retry, dedupe,&#xa;version source records" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="320" y="100" width="220" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- Validation Pipeline — NEW, sits between Source Connectors and Postgres Ingestion -->
+        <mxCell id="16" value="Validation Pipeline&#xa;Size · encoding · schema · range&#xa;temporal · anomaly · dedupe" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="320" y="260" width="220" height="90" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="4" value="Postgres Ingestion Schema&#xa;raw_source_records&#xa;normalized_events" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="600" y="100" width="220" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="5" value="Normalization and Enrichment&#xa;Entity · topic · geography&#xa;sentiment · severity (LLM)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="880" y="100" width="220" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="6" value="Feature Store&#xa;feature_sets&#xa;feature_snapshots · feature_values&#xa;feature_lineage" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="1160" y="100" width="220" height="120" as="geometry"/>
+        </mxCell>
+
+        <!-- AI Model Provider — NEW external dependency -->
+        <mxCell id="17" value="AI Model Provider&#xa;Ollama (dev) · Groq (staging)&#xa;Anthropic / OpenAI (prod)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1460" y="100" width="220" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- Row 2: Orchestration and prediction -->
+        <mxCell id="14" value="Orchestrator&#xa;APScheduler + ops.job_runs&#xa;Cron · dependency · dead-letter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="320" width="220" height="110" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="7" value="Prediction Engine&#xa;Heuristic baseline · LLM agent&#xa;Loop guard · context compression" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1160" y="300" width="220" height="110" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="8" value="Predictions Schema&#xa;prediction_targets · predictions&#xa;prediction_status_history" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="880" y="300" width="220" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- Row 3: Evaluation -->
+        <mxCell id="9" value="Evaluation Engine&#xa;Settlement · Brier score&#xa;calibration · paper return" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="600" y="320" width="220" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="10" value="Evaluation Schema&#xa;evaluation_results&#xa;backtest_runs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="320" y="320" width="220" height="100" as="geometry"/>
+        </mxCell>
+
+        <!-- Row 4: Alerting, Ops, Research UI -->
+        <mxCell id="11" value="Alerting Service&#xa;Probability + horizon gate&#xa;Idempotency · retry · log" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="880" y="490" width="240" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="12" value="Ops Schema&#xa;alert_rules · alert_deliveries&#xa;job_runs · audit_logs&#xa;config_overrides · model_usage_log" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="600" y="490" width="230" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="13" value="Research UI and Reporting&#xa;Prediction ledger · calibration&#xa;backtest vs live · audit drilldown" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="320" y="500" width="230" height="100" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="15" value="Google Chat" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="510" width="180" height="70" as="geometry"/>
+        </mxCell>
+
+        <!-- Discovery Agent — NEW (12-hour cron) -->
+        <mxCell id="18" value="Discovery Agent&#xa;12-hour cron: API health probe&#xa;schema change detection&#xa;new asset discovery" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="490" width="230" height="110" as="geometry"/>
+        </mxCell>
+
+        <!-- Admin UI — NEW -->
+        <mxCell id="19" value="Admin UI / Control Panel&#xa;Pipeline levers · source trust&#xa;model config · alert rules&#xa;dead-letter queue · audit log" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1460" y="300" width="230" height="120" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== EDGES ===== -->
+
+        <!-- Public APIs → Source Connectors -->
+        <mxCell id="100" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="2" target="3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Source Connectors → Validation Pipeline (was: → Postgres Ingestion) -->
+        <mxCell id="101" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="3" target="16">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Validation Pipeline → Postgres Ingestion [valid records] -->
+        <mxCell id="118" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="16" target="4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Validation Pipeline → Ops Schema [quarantined records logged] -->
+        <mxCell id="119" style="endArrow=classic;html=1;rounded=0;dashed=1;" edge="1" parent="1" source="16" target="12">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Postgres Ingestion → Normalization -->
+        <mxCell id="102" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="4" target="5">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Normalization → Feature Store -->
+        <mxCell id="103" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="5" target="6">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Feature Store → Prediction Engine -->
+        <mxCell id="104" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="6" target="7">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Prediction Engine → Predictions Schema -->
+        <mxCell id="105" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="7" target="8">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Predictions Schema → Evaluation Engine -->
+        <mxCell id="106" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="8" target="9">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Evaluation Engine → Evaluation Schema -->
+        <mxCell id="107" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="9" target="10">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Predictions Schema → Alerting Service [live, high-confidence] -->
+        <mxCell id="108" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="8" target="11">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Alerting Service → Google Chat -->
+        <mxCell id="109" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="11" target="15">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Alerting Service → Ops Schema [delivery log] -->
+        <mxCell id="110" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="11" target="12">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Evaluation Schema → Research UI -->
+        <mxCell id="111" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="10" target="13">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Predictions Schema → Research UI -->
+        <mxCell id="112" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="8" target="13">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Orchestrator schedules (dashed) -->
+        <mxCell id="113" style="dashed=1;endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="14" target="3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="114" style="dashed=1;endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="14" target="5">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="115" style="dashed=1;endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="14" target="7">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="116" style="dashed=1;endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="14" target="9">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="117" style="dashed=1;endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="14" target="11">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- NEW EDGES -->
+
+        <!-- Normalization ↔ AI Model Provider (bidirectional LLM calls) -->
+        <mxCell id="120" style="endArrow=classic;startArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="5" target="17">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Prediction Engine ↔ AI Model Provider (bidirectional LLM calls) -->
+        <mxCell id="121" style="endArrow=classic;startArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="7" target="17">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Prediction Engine → Ops Schema [model_usage_log cost tracking] -->
+        <mxCell id="122" style="endArrow=classic;html=1;rounded=0;dashed=1;" edge="1" parent="1" source="7" target="12">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Normalization → Ops Schema [model_usage_log] -->
+        <mxCell id="123" style="endArrow=classic;html=1;rounded=0;dashed=1;" edge="1" parent="1" source="5" target="12">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Discovery Agent → Public APIs [probe health] -->
+        <mxCell id="124" style="endArrow=open;html=1;rounded=0;dashed=1;" edge="1" parent="1" source="18" target="2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Discovery Agent → Ops Schema [log discovery results] -->
+        <mxCell id="125" style="endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="18" target="12">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Orchestrator → Discovery Agent [schedules, dashed] -->
+        <mxCell id="126" style="dashed=1;endArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="14" target="18">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Admin UI ↔ Ops Schema [config_overrides, alert_rules, job_runs DLQ] -->
+        <mxCell id="127" style="endArrow=classic;startArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="19" target="12">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Admin UI ↔ Postgres Ingestion [manages ops.api_sources trust level] -->
+        <mxCell id="128" style="endArrow=classic;startArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="19" target="4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Admin UI ↔ Predictions Schema [manage prediction_targets] -->
+        <mxCell id="129" style="endArrow=classic;startArrow=classic;html=1;rounded=0;" edge="1" parent="1" source="19" target="8">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

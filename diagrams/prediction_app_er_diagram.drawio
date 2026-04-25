@@ -1,0 +1,177 @@
+<mxfile host="app.diagrams.net" modified="2026-04-18T12:00:00.000Z" agent="Codex" version="24.7.17">
+  <diagram id="er-1" name="Prediction App ER Diagram">
+    <mxGraphModel dx="2200" dy="1400" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="2000" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- ops.api_sources — updated with trust model columns -->
+        <mxCell id="2" value="ops.api_sources&#xa;PK id uuid&#xa;name text UNIQUE&#xa;category text&#xa;base_url text&#xa;auth_type text&#xa;is_active bool&#xa;trust_level text&#xa;rate_limit_per_minute int&#xa;max_record_age_days int&#xa;max_attempts int&#xa;ingest_cron_interval_seconds int&#xa;notes text&#xa;updated_at timestamptz&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="270" height="270" as="geometry"/>
+        </mxCell>
+
+        <!-- ingestion.raw_source_records — updated with validation and version chain -->
+        <mxCell id="3" value="ingestion.raw_source_records&#xa;PK id uuid&#xa;source_id uuid FK&#xa;prior_record_id uuid FK (self)&#xa;external_id text&#xa;record_version int&#xa;source_recorded_at timestamptz&#xa;released_at timestamptz&#xa;published_at timestamptz&#xa;ingested_at timestamptz&#xa;raw_payload jsonb&#xa;normalized_payload jsonb&#xa;checksum text&#xa;validation_status text&#xa;validation_errors jsonb&#xa;validation_warnings jsonb" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="360" y="40" width="310" height="290" as="geometry"/>
+        </mxCell>
+
+        <!-- ingestion.normalized_events -->
+        <mxCell id="4" value="ingestion.normalized_events&#xa;PK id uuid&#xa;source_record_id uuid FK&#xa;event_type text&#xa;event_subtype text&#xa;title text&#xa;summary text&#xa;sentiment_score numeric&#xa;severity_score numeric&#xa;country_code text&#xa;region text&#xa;entity_data jsonb&#xa;event_occurred_at timestamptz&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="720" y="40" width="300" height="260" as="geometry"/>
+        </mxCell>
+
+        <!-- market_data.assets -->
+        <mxCell id="5" value="market_data.assets&#xa;PK id uuid&#xa;symbol text&#xa;asset_type text&#xa;name text&#xa;exchange text&#xa;base_currency text&#xa;quote_currency text&#xa;is_active bool&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="40" y="360" width="270" height="200" as="geometry"/>
+        </mxCell>
+
+        <!-- market_data.price_bars -->
+        <mxCell id="6" value="market_data.price_bars&#xa;PK id uuid&#xa;asset_id uuid FK&#xa;source_id uuid FK&#xa;bar_interval text&#xa;bar_start_at timestamptz&#xa;bar_end_at timestamptz&#xa;open numeric&#xa;high numeric&#xa;low numeric&#xa;close numeric&#xa;volume numeric&#xa;vwap numeric&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="360" y="380" width="310" height="260" as="geometry"/>
+        </mxCell>
+
+        <!-- features.feature_sets -->
+        <mxCell id="7" value="features.feature_sets&#xa;PK id uuid&#xa;name text&#xa;version text&#xa;description text&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="720" y="360" width="260" height="150" as="geometry"/>
+        </mxCell>
+
+        <!-- features.feature_snapshots -->
+        <mxCell id="8" value="features.feature_snapshots&#xa;PK id uuid&#xa;feature_set_id uuid FK&#xa;asset_id uuid FK&#xa;as_of_at timestamptz&#xa;lineage_summary jsonb&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="360" width="280" height="160" as="geometry"/>
+        </mxCell>
+
+        <!-- features.feature_values — updated with available_at -->
+        <mxCell id="9" value="features.feature_values&#xa;PK id uuid&#xa;snapshot_id uuid FK&#xa;feature_key text&#xa;feature_type text&#xa;numeric_value numeric&#xa;text_value text&#xa;boolean_value bool&#xa;json_value jsonb&#xa;available_at timestamptz&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1380" y="360" width="280" height="210" as="geometry"/>
+        </mxCell>
+
+        <!-- features.feature_lineage — NEW (was missing from diagram) -->
+        <mxCell id="21" value="features.feature_lineage&#xa;PK id uuid&#xa;snapshot_id uuid FK (NOT NULL)&#xa;source_record_id uuid FK&#xa;normalized_event_id uuid FK&#xa;note text&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1720" y="360" width="300" height="170" as="geometry"/>
+        </mxCell>
+
+        <!-- predictions.model_versions -->
+        <mxCell id="10" value="predictions.model_versions&#xa;PK id uuid&#xa;name text&#xa;version text&#xa;model_type text&#xa;config jsonb&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="660" width="260" height="160" as="geometry"/>
+        </mxCell>
+
+        <!-- predictions.prompt_versions -->
+        <mxCell id="11" value="predictions.prompt_versions&#xa;PK id uuid&#xa;name text&#xa;version text&#xa;prompt_text text&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="360" y="660" width="260" height="160" as="geometry"/>
+        </mxCell>
+
+        <!-- predictions.prediction_targets — asset_id added for asset-specific targets -->
+        <mxCell id="12" value="predictions.prediction_targets&#xa;PK id uuid&#xa;name text UNIQUE&#xa;asset_type text&#xa;asset_id uuid FK (nullable)&#xa;target_metric text&#xa;direction_rule jsonb&#xa;horizon_hours int&#xa;settlement_rule jsonb&#xa;is_active bool&#xa;updated_at timestamptz&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="660" y="640" width="290" height="230" as="geometry"/>
+        </mxCell>
+
+        <!-- predictions.predictions — updated with new flags and backtest link -->
+        <mxCell id="13" value="predictions.predictions&#xa;PK id uuid&#xa;correlation_id uuid&#xa;target_id uuid FK&#xa;asset_id uuid FK&#xa;feature_snapshot_id uuid FK&#xa;model_version_id uuid FK&#xa;prompt_version_id uuid FK&#xa;backtest_run_id uuid FK&#xa;prediction_mode text&#xa;predicted_outcome text&#xa;probability numeric&#xa;evidence_summary text&#xa;rationale jsonb&#xa;hallucination_risk bool&#xa;probability_extreme_flag bool&#xa;context_compressed bool&#xa;created_at timestamptz&#xa;horizon_end_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="620" width="320" height="340" as="geometry"/>
+        </mxCell>
+
+        <!-- predictions.prediction_status_history -->
+        <mxCell id="14" value="predictions.prediction_status_history&#xa;PK id uuid&#xa;prediction_id uuid FK&#xa;status text&#xa;reason text&#xa;recorded_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1380" y="660" width="280" height="160" as="geometry"/>
+        </mxCell>
+
+        <!-- evaluation.evaluation_results -->
+        <mxCell id="15" value="evaluation.evaluation_results&#xa;PK id uuid&#xa;prediction_id uuid FK (UNIQUE)&#xa;evaluated_at timestamptz&#xa;evaluation_state text&#xa;actual_outcome text&#xa;directional_correct bool&#xa;brier_score numeric&#xa;return_pct numeric&#xa;cost_adjusted_return_pct numeric&#xa;calibration_bucket text&#xa;notes text" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="1010" y="1020" width="320" height="250" as="geometry"/>
+        </mxCell>
+
+        <!-- evaluation.backtest_runs -->
+        <mxCell id="16" value="evaluation.backtest_runs&#xa;PK id uuid&#xa;name text&#xa;code_version text&#xa;model_version_id uuid FK&#xa;feature_set_id uuid FK&#xa;target_id uuid FK&#xa;train_start_at timestamptz&#xa;train_end_at timestamptz&#xa;test_start_at timestamptz&#xa;test_end_at timestamptz&#xa;metrics jsonb&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="660" y="1020" width="300" height="260" as="geometry"/>
+        </mxCell>
+
+        <!-- ops.alert_rules -->
+        <mxCell id="17" value="ops.alert_rules&#xa;PK id uuid&#xa;name text UNIQUE&#xa;min_probability numeric&#xa;max_horizon_hours int&#xa;channel_type text&#xa;destination text&#xa;is_active bool&#xa;updated_at timestamptz&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1380" y="1020" width="280" height="200" as="geometry"/>
+        </mxCell>
+
+        <!-- ops.alert_deliveries -->
+        <mxCell id="18" value="ops.alert_deliveries&#xa;PK id uuid&#xa;prediction_id uuid FK&#xa;alert_rule_id uuid FK&#xa;delivery_status text&#xa;attempt_count int&#xa;last_attempt_at timestamptz&#xa;last_error text&#xa;provider_message_id text&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1720" y="1020" width="300" height="210" as="geometry"/>
+        </mxCell>
+
+        <!-- ops.job_runs — updated with attempt tracking -->
+        <mxCell id="19" value="ops.job_runs&#xa;PK id uuid&#xa;job_name text&#xa;correlation_id uuid&#xa;status text&#xa;attempt_count int&#xa;max_attempts int&#xa;started_at timestamptz&#xa;finished_at timestamptz&#xa;error_summary text&#xa;metadata jsonb" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1040" width="280" height="220" as="geometry"/>
+        </mxCell>
+
+        <!-- ops.audit_logs -->
+        <mxCell id="20" value="ops.audit_logs&#xa;PK id uuid&#xa;entity_type text&#xa;entity_id uuid&#xa;action text&#xa;correlation_id uuid&#xa;actor_type text&#xa;details jsonb&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="370" y="1040" width="260" height="200" as="geometry"/>
+        </mxCell>
+
+        <!-- ops.config_overrides — NEW -->
+        <mxCell id="22" value="ops.config_overrides&#xa;PK id uuid&#xa;key text UNIQUE&#xa;value text&#xa;default_value text&#xa;description text&#xa;updated_by text&#xa;updated_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1330" width="270" height="180" as="geometry"/>
+        </mxCell>
+
+        <!-- ops.model_usage_log — NEW -->
+        <mxCell id="23" value="ops.model_usage_log&#xa;PK id uuid&#xa;correlation_id uuid&#xa;job_run_id uuid FK&#xa;agent text&#xa;model_provider text&#xa;model_name text&#xa;call_purpose text&#xa;input_tokens int&#xa;output_tokens int&#xa;context_window_tokens int&#xa;context_utilization_pct numeric&#xa;compression_applied bool&#xa;compression_type text&#xa;cost_usd numeric&#xa;duration_ms int&#xa;output_valid bool&#xa;hallucination_flags jsonb&#xa;created_at timestamptz" style="shape=swimlane;whiteSpace=wrap;html=1;rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="370" y="1300" width="300" height="360" as="geometry"/>
+        </mxCell>
+
+        <!-- ===== EDGES ===== -->
+
+        <!-- ops.api_sources → raw_source_records (source_id FK) -->
+        <mxCell id="100" style="endArrow=classic;html=1;" edge="1" parent="1" source="2" target="3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- raw_source_records → normalized_events (source_record_id FK) -->
+        <mxCell id="101" style="endArrow=classic;html=1;" edge="1" parent="1" source="3" target="4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- ops.api_sources → price_bars (source_id FK) -->
+        <mxCell id="102" style="endArrow=classic;html=1;" edge="1" parent="1" source="2" target="6"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- assets → price_bars (asset_id FK) -->
+        <mxCell id="103" style="endArrow=classic;html=1;" edge="1" parent="1" source="5" target="6"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- feature_sets → feature_snapshots (feature_set_id FK) -->
+        <mxCell id="104" style="endArrow=classic;html=1;" edge="1" parent="1" source="7" target="8"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- feature_snapshots → feature_values (snapshot_id FK) -->
+        <mxCell id="105" style="endArrow=classic;html=1;" edge="1" parent="1" source="8" target="9"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- assets → feature_snapshots (asset_id FK) -->
+        <mxCell id="106" style="endArrow=classic;html=1;" edge="1" parent="1" source="5" target="8"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- prediction_targets → predictions (target_id FK) -->
+        <mxCell id="107" style="endArrow=classic;html=1;" edge="1" parent="1" source="12" target="13"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- model_versions → predictions (model_version_id FK) -->
+        <mxCell id="108" style="endArrow=classic;html=1;" edge="1" parent="1" source="10" target="13"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- prompt_versions → predictions (prompt_version_id FK) -->
+        <mxCell id="109" style="endArrow=classic;html=1;" edge="1" parent="1" source="11" target="13"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- feature_snapshots → predictions (feature_snapshot_id FK) -->
+        <mxCell id="110" style="endArrow=classic;html=1;" edge="1" parent="1" source="8" target="13"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- predictions → prediction_status_history (prediction_id FK) -->
+        <mxCell id="111" style="endArrow=classic;html=1;" edge="1" parent="1" source="13" target="14"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- predictions → evaluation_results (prediction_id FK) -->
+        <mxCell id="112" style="endArrow=classic;html=1;" edge="1" parent="1" source="13" target="15"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- model_versions → backtest_runs (model_version_id FK) -->
+        <mxCell id="113" style="endArrow=classic;html=1;" edge="1" parent="1" source="10" target="16"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- feature_sets → backtest_runs (feature_set_id FK) -->
+        <mxCell id="114" style="endArrow=classic;html=1;" edge="1" parent="1" source="7" target="16"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- alert_rules → alert_deliveries (alert_rule_id FK) -->
+        <mxCell id="115" style="endArrow=classic;html=1;" edge="1" parent="1" source="17" target="18"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- predictions → alert_deliveries (prediction_id FK) -->
+        <mxCell id="116" style="endArrow=classic;html=1;" edge="1" parent="1" source="13" target="18"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- NEW EDGES -->
+
+        <!-- feature_lineage → feature_snapshots (snapshot_id FK) -->
+        <mxCell id="117" style="endArrow=classic;html=1;" edge="1" parent="1" source="21" target="8"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- feature_lineage → raw_source_records (source_record_id FK, nullable) -->
+        <mxCell id="118" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="21" target="3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- feature_lineage → normalized_events (normalized_event_id FK, nullable) -->
+        <mxCell id="119" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="21" target="4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- model_usage_log → job_runs (job_run_id FK) -->
+        <mxCell id="120" style="endArrow=classic;html=1;" edge="1" parent="1" source="23" target="19"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- backtest_runs → prediction_targets (target_id FK) -->
+        <mxCell id="121" style="endArrow=classic;html=1;" edge="1" parent="1" source="16" target="12"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- predictions → backtest_runs (backtest_run_id FK, nullable) -->
+        <mxCell id="122" style="endArrow=classic;html=1;dashed=1;" edge="1" parent="1" source="13" target="16"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- assets → predictions (asset_id FK) -->
+        <mxCell id="123" style="endArrow=classic;html=1;" edge="1" parent="1" source="5" target="13"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <!-- raw_source_records self-reference (prior_record_id FK, nullable) -->
+        <mxCell id="124" style="endArrow=classic;html=1;dashed=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="3" target="3"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="710" y="120"/><mxPoint x="710" y="40"/></Array></mxGeometry></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
