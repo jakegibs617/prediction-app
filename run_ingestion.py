@@ -5,6 +5,7 @@ from app.logging import configure_logging
 from app.db.pool import init_pool, close_pool, get_pool
 from app.connectors.alpha_vantage import AlphaVantageConnector
 from app.connectors.coingecko import CoinGeckoConnector
+from app.connectors.eia import EiaConnector
 from app.connectors.fear_greed import FearGreedConnector
 from app.connectors.fred import FredConnector
 from app.connectors.gdelt import GdeltConnector
@@ -19,6 +20,7 @@ CONNECTORS = [
     ("GDELT", GdeltConnector),
     ("USGS", UsgsConnector),
     ("FRED", FredConnector),
+    ("EIA", EiaConnector),
     ("NewsAPI", NewsApiConnector),
     ("AlphaVantage", AlphaVantageConnector),  # last — slow due to rate limits
 ]
