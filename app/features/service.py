@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import structlog
 from dataclasses import dataclass, field
 from datetime import timezone
 from uuid import UUID, uuid4
@@ -8,6 +9,8 @@ from app.db.pool import get_pool
 from app.features.engine import PriceBar, build_price_feature_snapshot
 from app.predictions.contracts import FeatureSnapshot, FeatureValue
 from app.utils.time import get_utc_now
+
+log = structlog.get_logger(__name__)
 
 FEATURE_SET_NAME = "price-baseline"
 FEATURE_SET_VERSION = "v1"
@@ -40,6 +43,8 @@ _MACRO_FEATURE_ROUTES: dict[str, list[tuple[str, list[tuple[str, str]]]]] = {
             ("NW2_EPG0_SWO_R48_BCF", "macro__natgas_storage_bcf"),
         ]),
         ("fred", [
+            # EIA RWTC is weekly; FRED DCOILWTICO is daily — keep both for
+            # data-availability redundancy across different update cadences.
             ("DCOILWTICO", "macro__wti_crude_fred"),
             ("DGS10", "macro__treasury_10y_yield"),
         ]),
@@ -303,6 +308,7 @@ async def read_macro_feature_inputs(asset_type: str, cutoff_time) -> list[dict]:
                 if row is None:
                     continue
                 value_text = row["value_text"]
+                # EIA uses "." to represent unreleased / missing observations.
                 if value_text in (None, "", "."):
                     continue
                 try:
@@ -359,6 +365,12 @@ async def generate_features_for_asset(candidate: FeatureCandidate, *, as_of_at=N
     # snapshot_id and lineage machinery as price features.
     if candidate.asset_type:
         macro_inputs = await read_macro_feature_inputs(candidate.asset_type, cutoff_time)
+        if not macro_inputs and candidate.asset_type in _MACRO_FEATURE_ROUTES:
+            log.warning(
+                "macro_inputs_empty",
+                asset_symbol=candidate.asset_symbol,
+                asset_type=candidate.asset_type,
+            )
         if macro_inputs:
             macro_values = build_macro_feature_values(macro_inputs)
             merged = list(snapshot.values) + macro_values

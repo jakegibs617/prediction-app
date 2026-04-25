@@ -8,14 +8,17 @@ We verify:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
 from app.features import service
+from app.features.engine import PriceBar
 from app.features.service import (
     FeatureCandidate,
     build_macro_feature_values,
+    generate_features_for_asset,
     read_macro_feature_inputs,
 )
 from app.predictions.contracts import FeatureValue
@@ -169,3 +172,80 @@ def test_feature_candidate_default_asset_type() -> None:
     """Existing call sites that don't pass asset_type should still work."""
     candidate = FeatureCandidate(asset_id=uuid4(), asset_symbol="BTC/USD")
     assert candidate.asset_type == ""
+
+
+# ---- generate_features_for_asset integration --------------------------------
+
+def _make_price_bar(asset_id, bar_end_at: datetime) -> PriceBar:
+    bar_start = bar_end_at.replace(hour=bar_end_at.hour - 1) if bar_end_at.hour > 0 else bar_end_at
+    return PriceBar(
+        asset_id=asset_id,
+        source_record_id=uuid4(),
+        bar_start_at=bar_start,
+        bar_end_at=bar_end_at,
+        close=50000.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_features_for_asset_merges_macro_values(monkeypatch) -> None:
+    """Macro features are merged into the snapshot alongside price features."""
+    asset_id = uuid4()
+    feature_set_id = uuid4()
+    cutoff = datetime(2026, 4, 25, 12, 0, 0, tzinfo=timezone.utc)
+    bar_end = datetime(2026, 4, 25, 11, 0, 0, tzinfo=timezone.utc)
+    price_bar = _make_price_bar(asset_id, bar_end)
+    macro_input = {
+        "feature_key": "macro__fear_greed_index",
+        "numeric_value": 42.0,
+        "source_record_id": uuid4(),
+        "available_at": cutoff,
+        "source_name": "alternative_me_fear_greed",
+        "series_id": "FEAR_GREED",
+    }
+
+    monkeypatch.setattr(service, "get_or_create_feature_set", AsyncMock(return_value=feature_set_id))
+    monkeypatch.setattr(service, "feature_snapshot_exists", AsyncMock(return_value=False))
+    monkeypatch.setattr(service, "read_price_bars", AsyncMock(return_value=[price_bar]))
+    monkeypatch.setattr(service, "read_macro_feature_inputs", AsyncMock(return_value=[macro_input]))
+    monkeypatch.setattr(service, "write_feature_snapshot", AsyncMock())
+    monkeypatch.setattr(service, "write_feature_values", AsyncMock())
+    monkeypatch.setattr(service, "write_feature_lineage", AsyncMock())
+
+    candidate = FeatureCandidate(asset_id=asset_id, asset_symbol="BTC/USD", asset_type="crypto")
+    snapshot = await generate_features_for_asset(candidate, as_of_at=cutoff)
+
+    assert snapshot is not None
+    keys = {v.feature_key for v in snapshot.values}
+    assert "macro__fear_greed_index" in keys, "macro feature must appear in merged snapshot"
+    assert any(not k.startswith("macro__") for k in keys), "price features must also be present"
+    # Values must be sorted by feature_key
+    key_list = [v.feature_key for v in snapshot.values]
+    assert key_list == sorted(key_list)
+
+
+@pytest.mark.asyncio
+async def test_generate_features_for_asset_writes_snapshot_when_macro_empty(monkeypatch) -> None:
+    """When macro inputs are empty, the snapshot is still persisted with price features only."""
+    asset_id = uuid4()
+    feature_set_id = uuid4()
+    cutoff = datetime(2026, 4, 25, 12, 0, 0, tzinfo=timezone.utc)
+    bar_end = datetime(2026, 4, 25, 11, 0, 0, tzinfo=timezone.utc)
+    price_bar = _make_price_bar(asset_id, bar_end)
+
+    mock_write_snapshot = AsyncMock()
+    monkeypatch.setattr(service, "get_or_create_feature_set", AsyncMock(return_value=feature_set_id))
+    monkeypatch.setattr(service, "feature_snapshot_exists", AsyncMock(return_value=False))
+    monkeypatch.setattr(service, "read_price_bars", AsyncMock(return_value=[price_bar]))
+    monkeypatch.setattr(service, "read_macro_feature_inputs", AsyncMock(return_value=[]))
+    monkeypatch.setattr(service, "write_feature_snapshot", mock_write_snapshot)
+    monkeypatch.setattr(service, "write_feature_values", AsyncMock())
+    monkeypatch.setattr(service, "write_feature_lineage", AsyncMock())
+
+    candidate = FeatureCandidate(asset_id=asset_id, asset_symbol="BTC/USD", asset_type="crypto")
+    snapshot = await generate_features_for_asset(candidate, as_of_at=cutoff)
+
+    assert snapshot is not None, "snapshot must be returned even when macro inputs are empty"
+    mock_write_snapshot.assert_awaited_once()
+    assert not any(v.feature_key.startswith("macro__") for v in snapshot.values), \
+        "no macro features expected when inputs are empty"
