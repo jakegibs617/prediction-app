@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: prediction-app-db
     restart: unless-stopped
     environment:
@@ -10,7 +10,7 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
       - ./sql/001_init_experimental_prediction_app.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
       - ./sql/002_pending_migrations.sql:/docker-entrypoint-initdb.d/002_migrations.sql:ro
     healthcheck:
@@ -33,7 +33,11 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       LOG_TO_STDOUT: "true"
-    command: ["prediction-app", "schedule", "--mode", "stages"]
+      # Reach Ollama running on the Windows/macOS host from inside the container
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["prediction-app", "schedule", "--mode", "research-cycle"]
     volumes:
       - ./logs:/app/logs
 

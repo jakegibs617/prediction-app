@@ -4,11 +4,21 @@ import argparse
 import asyncio
 from collections.abc import Awaitable, Callable
 
+import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.alerts.pipeline import AlertCheckPipeline
 from app.config import settings
+from app.connectors.alpha_vantage import AlphaVantageConnector
+from app.connectors.coingecko import CoinGeckoConnector
+from app.connectors.eia import EiaConnector
+from app.connectors.fear_greed import FearGreedConnector
+from app.connectors.fred import FredConnector
+from app.connectors.gdelt import GdeltConnector
+from app.connectors.newsapi import NewsApiConnector
+from app.connectors.usgs import UsgsConnector
 from app.db.pool import close_pool, init_pool
+from app.db.seed import run_seed
 from app.evaluation.pipeline import EvaluationPipeline
 from app.features.pipeline import FeaturePipeline
 from app.logging import configure_logging
@@ -16,7 +26,38 @@ from app.normalization import NormalizationPipeline
 from app.ops.orchestrator import ResearchOrchestrator
 from app.predictions.pipeline import PredictionPipeline
 
+_log = structlog.get_logger(__name__)
+
 StageRunner = Callable[[], Awaitable[None]]
+
+
+_INGESTION_CONNECTORS = (
+    ("CoinGecko", CoinGeckoConnector),
+    ("FearGreed", FearGreedConnector),
+    ("GDELT", GdeltConnector),
+    ("USGS", UsgsConnector),
+    ("FRED", FredConnector),
+    ("EIA", EiaConnector),
+    ("NewsAPI", NewsApiConnector),
+    ("AlphaVantage", AlphaVantageConnector),
+)
+
+
+async def run_ingestion() -> None:
+    """Run all configured connectors sequentially. Errors per-connector are logged, not raised."""
+    _log.info("ingestion_run_started", connectors=[name for name, _ in _INGESTION_CONNECTORS])
+    succeeded = 0
+    failed = 0
+    for name, cls in _INGESTION_CONNECTORS:
+        try:
+            connector = cls()
+            await connector.run()
+            succeeded += 1
+            _log.info("ingestion_connector_done", connector=name)
+        except Exception as exc:  # noqa: BLE001 - keep iterating other connectors
+            failed += 1
+            _log.error("ingestion_connector_failed", connector=name, error=str(exc))
+    _log.info("ingestion_run_complete", succeeded=succeeded, failed=failed)
 
 
 def build_stage_registry() -> dict[str, StageRunner]:
@@ -26,6 +67,8 @@ def build_stage_registry() -> dict[str, StageRunner]:
     alert_pipeline = AlertCheckPipeline()
     evaluation_pipeline = EvaluationPipeline()
     orchestrator = ResearchOrchestrator(
+        ingestion_fn=run_ingestion,
+        normalization_pipeline=normalization,
         feature_pipeline=feature_pipeline,
         prediction_pipeline=prediction_pipeline,
         alert_pipeline=alert_pipeline,
@@ -36,6 +79,7 @@ def build_stage_registry() -> dict[str, StageRunner]:
         await orchestrator.run_cycle()
 
     return {
+        "ingestion": run_ingestion,
         "normalization": normalization.run,
         "feature_generation": feature_pipeline.run,
         "prediction_run": prediction_pipeline.run,
@@ -50,6 +94,7 @@ def build_scheduler_job_definitions(mode: str = "stages") -> list[dict]:
         return [{"name": "research_cycle", "seconds": settings.cron_news_ingest_interval_seconds}]
 
     return [
+        {"name": "ingestion", "seconds": settings.cron_news_ingest_interval_seconds},
         {"name": "normalization", "seconds": settings.cron_news_ingest_interval_seconds},
         {"name": "feature_generation", "seconds": settings.cron_news_ingest_interval_seconds},
         {"name": "prediction_run", "seconds": settings.cron_news_ingest_interval_seconds},
@@ -104,6 +149,7 @@ async def async_main(argv: list[str] | None = None) -> int:
 
     configure_logging()
     await init_pool()
+    await run_seed()
     try:
         if args.command == "run":
             await run_named_stage(args.stage)
