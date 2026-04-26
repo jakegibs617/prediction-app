@@ -1,8 +1,14 @@
 -- Bootstrap script for the experimental_prediction_app PostgreSQL database.
--- Usage:
+-- Usage (standalone):
 --   psql -U <user> -f sql/001_init_experimental_prediction_app.sql
+-- In Docker: run against the already-created POSTGRES_DB database; the CREATE DATABASE
+-- and \connect lines are skipped automatically because Docker's entrypoint executes this
+-- script with -d experimental_prediction_app already set.
 
-CREATE DATABASE experimental_prediction_app;
+SELECT 'CREATE DATABASE experimental_prediction_app'
+WHERE NOT EXISTS (
+    SELECT FROM pg_database WHERE datname = 'experimental_prediction_app'
+)\gexec
 
 \connect experimental_prediction_app;
 

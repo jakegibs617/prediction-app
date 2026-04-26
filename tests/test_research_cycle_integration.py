@@ -76,6 +76,7 @@ async def test_research_cycle_smoke_db_backed(monkeypatch) -> None:
 
         test_pool = TransactionPool(conn)
         pool_targets = [
+            "app.normalization.pipeline",
             "app.features.service",
             "app.predictions.service",
             "app.alerts.service",
@@ -248,6 +249,7 @@ async def test_research_cycle_smoke_db_backed(monkeypatch) -> None:
         assert evaluation_row["actual_outcome"] == "hit"
         assert evaluation_row["directional_correct"] is True
         assert [(row["job_name"], row["status"]) for row in job_statuses] == [
+            ("normalization", "succeeded"),
             ("feature_generation", "succeeded"),
             ("prediction_run", "succeeded"),
             ("alert_check", "succeeded"),

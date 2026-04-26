@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import httpx
 import structlog
 
+from app.alerts.rules import confidence_label
 from app.config import settings
 
 log = structlog.get_logger(__name__)
@@ -23,8 +24,9 @@ class TelegramDeliveryResult:
 
 
 def format_telegram_message(payload: dict[str, str]) -> str:
+    label = confidence_label(float(payload["probability"]))
     lines = [
-        "<b>High-confidence prediction alert</b>",
+        f"<b>{label} prediction</b>",
         "",
         f"Asset: <b>{payload['asset_symbol']}</b>",
         f"Metric: {payload['target_metric']}",

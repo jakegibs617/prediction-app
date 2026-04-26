@@ -3,16 +3,22 @@ from __future__ import annotations
 from app.predictions.logic import PredictionRecord
 
 
+def confidence_label(probability: float) -> str:
+    if probability >= 0.70:
+        return "High-confidence"
+    if probability >= 0.40:
+        return "Medium-confidence"
+    return "Low-confidence"
+
+
 def should_send_alert(
     prediction: PredictionRecord,
     *,
-    min_probability: float,
     max_horizon_hours: int,
 ) -> bool:
     horizon_hours = (prediction.horizon_end_at - prediction.created_at).total_seconds() / 3600
     return (
         prediction.prediction_mode == "live"
-        and float(prediction.probability) >= min_probability
         and horizon_hours <= max_horizon_hours
         and not prediction.hallucination_risk
         and not prediction.probability_extreme_flag

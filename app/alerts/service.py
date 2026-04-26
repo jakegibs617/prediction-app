@@ -114,7 +114,6 @@ async def process_prediction_alert(
             continue
         if not should_send_alert(
             prediction,
-            min_probability=float(rule.min_probability),
             max_horizon_hours=rule.max_horizon_hours,
         ):
             continue

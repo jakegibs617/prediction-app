@@ -36,24 +36,19 @@ def build_prediction_record(
     )
 
 
-def test_sends_alert_for_high_confidence_live_prediction() -> None:
+def test_sends_alert_for_live_prediction() -> None:
     prediction = build_prediction_record()
-    assert should_send_alert(prediction, min_probability=0.85, max_horizon_hours=72)
-
-
-def test_does_not_send_alert_below_threshold() -> None:
-    prediction = build_prediction_record(probability="0.84")
-    assert not should_send_alert(prediction, min_probability=0.85, max_horizon_hours=72)
+    assert should_send_alert(prediction, max_horizon_hours=72)
 
 
 def test_does_not_send_alert_for_long_horizon() -> None:
     prediction = build_prediction_record(horizon_hours=96)
-    assert not should_send_alert(prediction, min_probability=0.85, max_horizon_hours=72)
+    assert not should_send_alert(prediction, max_horizon_hours=72)
 
 
 def test_does_not_send_alert_for_backtest() -> None:
     prediction = build_prediction_record(prediction_mode="backtest")
-    assert not should_send_alert(prediction, min_probability=0.85, max_horizon_hours=72)
+    assert not should_send_alert(prediction, max_horizon_hours=72)
 
 
 def test_formats_required_alert_payload_fields() -> None:
