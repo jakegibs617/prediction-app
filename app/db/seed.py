@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import structlog
 
+from app.config import settings
 from app.db.pool import get_pool
 
 _log = structlog.get_logger(__name__)
@@ -134,13 +135,13 @@ async def _seed_alert_rules(conn) -> None:
         VALUES
             ('36681dd1-f4ea-479a-a9b8-a8c2ad5d5b5b',
              'default_telegram_high_confidence',
-             0.65, 72, 'telegram', '8510148267', true,
+             0.65, 72, 'telegram', $1, true,
              '2026-04-20 09:17:09.981369-04')
         ON CONFLICT (name) DO UPDATE SET
             destination    = EXCLUDED.destination,
             min_probability = EXCLUDED.min_probability,
             updated_at     = now()
-    """)
+    """, settings.telegram_chat_id)
 
 
 async def _seed_prediction_targets(conn) -> None:
