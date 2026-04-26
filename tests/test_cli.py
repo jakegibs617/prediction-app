@@ -7,7 +7,7 @@ from app.cli import build_parser, build_scheduler_job_definitions, run_named_sta
 
 def test_build_scheduler_job_definitions_for_stages() -> None:
     jobs = build_scheduler_job_definitions("stages")
-    assert [job["name"] for job in jobs] == ["normalization", "feature_generation", "prediction_run", "alert_check", "evaluation"]
+    assert [job["name"] for job in jobs] == ["ingestion", "normalization", "feature_generation", "prediction_run", "alert_check", "evaluation"]
     assert all("seconds" in job for job in jobs)
 
 

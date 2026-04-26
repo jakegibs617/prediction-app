@@ -27,6 +27,7 @@ class StubPipeline:
 async def test_research_orchestrator_runs_stages_in_order() -> None:
     calls: list[str] = []
     orchestrator = ResearchOrchestrator(
+        normalization_pipeline=StubPipeline("normalization", calls),
         feature_pipeline=StubPipeline("feature", calls),
         prediction_pipeline=StubPipeline("prediction", calls),
         alert_pipeline=StubPipeline("alert", calls),
@@ -35,7 +36,8 @@ async def test_research_orchestrator_runs_stages_in_order() -> None:
 
     result = await orchestrator.run_cycle()
 
-    assert calls == ["feature", "prediction", "alert", "evaluation"]
+    assert calls == ["normalization", "feature", "prediction", "alert", "evaluation"]
+    assert result.normalization_ran
     assert result.feature_generation_ran
     assert result.prediction_ran
     assert result.alerting_ran
@@ -47,6 +49,7 @@ async def test_research_orchestrator_smoke_lifecycle() -> None:
     calls: list[str] = []
     state: dict[str, bool] = {}
     orchestrator = ResearchOrchestrator(
+        normalization_pipeline=StubPipeline("normalization", calls, state),
         feature_pipeline=StubPipeline("feature", calls, state),
         prediction_pipeline=StubPipeline("prediction", calls, state),
         alert_pipeline=StubPipeline("alert", calls, state),
