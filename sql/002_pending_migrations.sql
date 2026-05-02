@@ -160,7 +160,9 @@ ALTER TABLE predictions.predictions
     ADD COLUMN hallucination_risk       boolean NOT NULL DEFAULT false,
     ADD COLUMN probability_extreme_flag boolean NOT NULL DEFAULT false,
     ADD COLUMN context_compressed       boolean NOT NULL DEFAULT false,
-    ADD COLUMN backtest_run_id          uuid REFERENCES evaluation.backtest_runs(id);
+    ADD COLUMN backtest_run_id          uuid REFERENCES evaluation.backtest_runs(id),
+    ADD COLUMN llm_probability         numeric(7, 5),
+    ADD COLUMN pre_cal_probability     numeric(7, 5);
 
 -- Fix: correlation_id on predictions should be SET to the orchestrator's
 -- pipeline-level correlation_id (same UUID as ops.job_runs.correlation_id),
@@ -175,6 +177,37 @@ CREATE INDEX predictions_hallucination_risk_idx
 CREATE INDEX predictions_backtest_run_idx
     ON predictions.predictions (backtest_run_id)
     WHERE backtest_run_id IS NOT NULL;
+
+-- ============================================================
+-- 10b. ml.training_examples - clean model-training surface
+-- ============================================================
+CREATE SCHEMA IF NOT EXISTS ml;
+
+CREATE OR REPLACE VIEW ml.training_examples AS
+SELECT
+    p.id                        AS prediction_id,
+    p.target_id,
+    p.asset_id,
+    p.feature_snapshot_id,
+    p.created_at,
+    p.model_version_id,
+    p.prediction_mode,
+    p.llm_probability,
+    p.pre_cal_probability,
+    p.probability               AS final_probability,
+    p.hallucination_risk,
+    p.probability_extreme_flag,
+    er.directional_correct,
+    er.brier_score,
+    er.return_pct,
+    er.cost_adjusted_return_pct,
+    er.calibration_bucket,
+    er.actual_outcome,
+    er.evaluated_at
+FROM predictions.predictions p
+JOIN evaluation.evaluation_results er
+    ON er.prediction_id = p.id
+   AND er.evaluation_state = 'evaluated';
 
 -- ============================================================
 -- 11. ops.alert_rules — updated_at for change tracking

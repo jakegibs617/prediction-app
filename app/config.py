@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     coingecko_api_key: str = ""
     fred_api_key: str = ""
     eia_api_key: str = ""
+    glassnode_api_key: str = ""
     news_api_key: str = ""
     sec_edgar_user_agent: str = ""
     noaa_user_agent: str = ""

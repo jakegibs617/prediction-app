@@ -10,11 +10,15 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.alerts.pipeline import AlertCheckPipeline
 from app.config import settings
 from app.connectors.alpha_vantage import AlphaVantageConnector
+from app.connectors.cftc_cot import CftcCotConnector
+from app.connectors.cboe_options import CboeOptionsConnector
 from app.connectors.coingecko import CoinGeckoConnector
 from app.connectors.eia import EiaConnector
 from app.connectors.fear_greed import FearGreedConnector
 from app.connectors.fred import FredConnector
+from app.connectors.fred_calendar import FredCalendarConnector
 from app.connectors.gdelt import GdeltConnector
+from app.connectors.glasschain import GlasschainConnector
 from app.connectors.newsapi import NewsApiConnector
 from app.connectors.usgs import UsgsConnector
 from app.db.pool import close_pool, init_pool
@@ -24,6 +28,8 @@ from app.features.pipeline import FeaturePipeline
 from app.logging import configure_logging
 from app.normalization import NormalizationPipeline
 from app.ops.orchestrator import ResearchOrchestrator
+from app.predictions.calibration import train_all_calibrators
+from app.predictions.ensemble_engine import train_all_targets
 from app.predictions.pipeline import PredictionPipeline
 
 _log = structlog.get_logger(__name__)
@@ -37,7 +43,11 @@ _INGESTION_CONNECTORS = (
     ("GDELT", GdeltConnector),
     ("USGS", UsgsConnector),
     ("FRED", FredConnector),
+    ("FREDCalendar", FredCalendarConnector),
     ("EIA", EiaConnector),
+    ("Glassnode", GlasschainConnector),
+    ("CFTC COT", CftcCotConnector),
+    ("Cboe Options", CboeOptionsConnector),
     ("NewsAPI", NewsApiConnector),
     ("AlphaVantage", AlphaVantageConnector),
 )
@@ -86,6 +96,8 @@ def build_stage_registry() -> dict[str, StageRunner]:
         "alert_check": alert_pipeline.run,
         "evaluation": evaluation_pipeline.run,
         "research_cycle": run_research_cycle,
+        "ensemble_train": train_all_targets,
+        "calibration_train": train_all_calibrators,
     }
 
 

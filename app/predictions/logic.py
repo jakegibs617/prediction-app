@@ -20,6 +20,8 @@ class PredictionRecord:
     prediction_mode: str
     predicted_outcome: str
     probability: Decimal
+    llm_probability: float | None
+    pre_cal_probability: float | None
     evidence_summary: str
     rationale: dict
     created_at: datetime
@@ -45,7 +47,12 @@ def validate_no_future_leak(snapshot: FeatureSnapshot, issuance_time: datetime) 
         raise ValueError(f"feature snapshot contains future data: {joined}")
 
 
-def build_prediction_record(prediction_input: PredictionInput) -> PredictionRecord:
+def build_prediction_record(
+    prediction_input: PredictionInput,
+    *,
+    llm_probability: float | None = None,
+    pre_cal_probability: float | None = None,
+) -> PredictionRecord:
     validate_no_future_leak(prediction_input.feature_snapshot, prediction_input.created_at)
 
     if len(prediction_input.evidence_summary) > settings.max_evidence_summary_chars:
@@ -61,6 +68,8 @@ def build_prediction_record(prediction_input: PredictionInput) -> PredictionReco
         prediction_mode=prediction_input.prediction_mode,
         predicted_outcome=prediction_input.predicted_outcome,
         probability=Decimal(f"{prediction_input.probability:.5f}"),
+        llm_probability=llm_probability,
+        pre_cal_probability=pre_cal_probability,
         evidence_summary=prediction_input.evidence_summary,
         rationale={
             **prediction_input.rationale,
