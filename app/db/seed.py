@@ -60,7 +60,23 @@ async def _seed_api_sources(conn) -> None:
 
             ('19d5dd00-2b81-449e-abbf-fb0565d08939', 'eia',
              'macro', 'https://api.eia.gov/v2',
-             'api_key', true, '2026-04-25 07:59:28.800015-04', 'verified', 60, 90)
+             'api_key', true, '2026-04-25 07:59:28.800015-04', 'verified', 60, 90),
+
+            ('f3a2c891-7d14-4b8e-9c3f-2a5e6d8b0f47', 'fred_calendar',
+             'macro', 'https://api.stlouisfed.org/fred',
+             'api_key', true, '2026-05-01 00:00:00.000000+00', 'unverified', 120, 365),
+
+            ('c01f2229-97e2-4881-91ec-1ce4f0aa9525', 'glassnode',
+             'macro', 'https://api.glassnode.com',
+             'api_key', true, '2026-05-01 00:00:00.000000+00', 'unverified', 30, 90),
+
+            ('30ce9520-0795-4a3d-b7d6-b7eb34cfc7fe', 'cftc_cot',
+             'macro', 'https://publicreporting.cftc.gov',
+             'none', true, '2026-05-01 00:00:00.000000+00', 'verified', 60, 365),
+
+            ('cc37f85f-6326-4ac9-9ea7-d8da7d27c710', 'cboe_options',
+             'macro', 'https://www.cboe.com',
+             'none', true, '2026-05-01 00:00:00.000000+00', 'verified', 30, 365)
         ON CONFLICT DO NOTHING
     """)
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -81,6 +82,42 @@ def build_snapshot():
     )
 
 
+def build_target():
+    from app.predictions.contracts import PredictionTarget
+
+    return PredictionTarget(
+        id=uuid4(),
+        name="btc_up_2pct_24h",
+        asset_type="crypto",
+        target_metric="price_return",
+        horizon_hours=24,
+        direction_rule=DirectionRule(direction="up", metric="price_return", threshold=0.02, unit="fraction"),
+        settlement_rule=SettlementRule(type="continuous", horizon="wall_clock_hours", n=24, calendar="none"),
+    )
+
+
+def build_prediction_input(*, probability: float = 0.7, created_at: datetime | None = None):
+    from app.predictions.contracts import PredictionInput
+
+    snapshot = build_snapshot()
+    return PredictionInput(
+        target=build_target(),
+        asset_id=snapshot.asset_id,
+        asset_symbol=snapshot.asset_symbol,
+        asset_type="crypto",
+        feature_snapshot=snapshot,
+        model_version_id=uuid4(),
+        prompt_version_id=uuid4(),
+        probability=probability,
+        evidence_summary="Mean reversion setup with mild positive sentiment.",
+        predicted_outcome="up_2pct",
+        prediction_mode="live",
+        created_at=created_at or datetime(2026, 4, 18, 6, 1, tzinfo=UTC),
+        correlation_id=uuid4(),
+        rationale={"model_name": "llm-prediction-engine"},
+    )
+
+
 @pytest.mark.asyncio
 async def test_read_active_targets_parses_rules(monkeypatch) -> None:
     conn = FakeConnection(
@@ -149,6 +186,10 @@ async def test_write_prediction_record_inserts_prediction(monkeypatch) -> None:
     prediction_id = await write_prediction_record(record)
 
     assert prediction_id is not None
+    insert_query, insert_args = conn.fetchval_calls[0]
+    assert "llm_probability" in insert_query
+    assert "pre_cal_probability" in insert_query
+    assert len(insert_args) == 20
 
 
 @pytest.mark.asyncio
@@ -233,3 +274,133 @@ async def test_generate_prediction_for_candidate_creates_prediction(monkeypatch)
 
     assert record is not None
     assert writes == ["prediction", "status"]
+
+
+@pytest.mark.asyncio
+async def test_generate_prediction_captures_llm_probability_before_blending(monkeypatch) -> None:
+    prediction_input = build_prediction_input(probability=0.73)
+    candidate = PredictionCandidate(
+        target=prediction_input.target,
+        snapshot=prediction_input.feature_snapshot,
+        asset_type=prediction_input.asset_type,
+    )
+    written_records = []
+
+    async def fake_prediction_exists(**kwargs):
+        return False
+
+    async def fake_generate_llm_prediction_input(**kwargs):
+        return prediction_input
+
+    async def fake_get_llm_model_version(*args):
+        return uuid4()
+
+    async def fake_blend(input_prediction):
+        return input_prediction.model_copy(update={"probability": 0.61})
+
+    async def fake_calibrate(input_prediction):
+        return input_prediction
+
+    async def fake_write_prediction(record):
+        written_records.append(record)
+        return record.id
+
+    async def fake_write_status(*args, **kwargs):
+        return uuid4()
+
+    monkeypatch.setattr("app.predictions.service.prediction_exists", fake_prediction_exists)
+    monkeypatch.setattr("app.predictions.service.get_model_client", lambda: object())
+    monkeypatch.setattr("app.predictions.service.get_or_create_llm_model_version", fake_get_llm_model_version)
+    monkeypatch.setattr("app.predictions.service.generate_llm_prediction_input", fake_generate_llm_prediction_input)
+    monkeypatch.setattr("app.predictions.service.maybe_blend_with_ensemble", fake_blend)
+    monkeypatch.setattr("app.predictions.service.maybe_apply_calibration", fake_calibrate)
+    monkeypatch.setattr("app.predictions.service.write_prediction_record", fake_write_prediction)
+    monkeypatch.setattr("app.predictions.service.write_prediction_status", fake_write_status)
+
+    record = await generate_prediction_for_candidate(candidate, correlation_id=uuid4())
+
+    assert record is written_records[0]
+    assert record.llm_probability == 0.73
+    assert record.probability == Decimal("0.61000")
+
+
+@pytest.mark.asyncio
+async def test_generate_prediction_captures_pre_cal_probability_before_calibration(monkeypatch) -> None:
+    prediction_input = build_prediction_input(probability=0.73)
+    candidate = PredictionCandidate(
+        target=prediction_input.target,
+        snapshot=prediction_input.feature_snapshot,
+        asset_type=prediction_input.asset_type,
+    )
+
+    async def fake_prediction_exists(**kwargs):
+        return False
+
+    async def fake_generate_llm_prediction_input(**kwargs):
+        return prediction_input
+
+    async def fake_get_llm_model_version(*args):
+        return uuid4()
+
+    async def fake_blend(input_prediction):
+        return input_prediction.model_copy(update={"probability": 0.62})
+
+    async def fake_calibrate(input_prediction):
+        return input_prediction.model_copy(
+            update={
+                "probability": 0.55,
+                "rationale": {**input_prediction.rationale, "calibration_applied": True},
+            }
+        )
+
+    async def fake_write_prediction(record):
+        return record.id
+
+    async def fake_write_status(*args, **kwargs):
+        return uuid4()
+
+    monkeypatch.setattr("app.predictions.service.prediction_exists", fake_prediction_exists)
+    monkeypatch.setattr("app.predictions.service.get_model_client", lambda: object())
+    monkeypatch.setattr("app.predictions.service.get_or_create_llm_model_version", fake_get_llm_model_version)
+    monkeypatch.setattr("app.predictions.service.generate_llm_prediction_input", fake_generate_llm_prediction_input)
+    monkeypatch.setattr("app.predictions.service.maybe_blend_with_ensemble", fake_blend)
+    monkeypatch.setattr("app.predictions.service.maybe_apply_calibration", fake_calibrate)
+    monkeypatch.setattr("app.predictions.service.write_prediction_record", fake_write_prediction)
+    monkeypatch.setattr("app.predictions.service.write_prediction_status", fake_write_status)
+
+    record = await generate_prediction_for_candidate(candidate, correlation_id=uuid4())
+
+    assert record is not None
+    assert record.llm_probability == 0.73
+    assert record.pre_cal_probability == 0.62
+    assert record.probability == Decimal("0.55000")
+
+
+@pytest.mark.asyncio
+async def test_generate_prediction_leaves_probability_decomposition_null_for_heuristic(monkeypatch) -> None:
+    snapshot = build_snapshot()
+    candidate = PredictionCandidate(target=build_target(), snapshot=snapshot, asset_type="crypto")
+
+    async def fake_prediction_exists(**kwargs):
+        return False
+
+    async def fake_get_model_version():
+        return uuid4()
+
+    async def fake_write_prediction(record):
+        return record.id
+
+    async def fake_write_status(*args, **kwargs):
+        return uuid4()
+
+    monkeypatch.setattr("app.predictions.service.prediction_exists", fake_prediction_exists)
+    monkeypatch.setattr("app.predictions.service.get_model_client", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr("app.predictions.service.get_or_create_model_version", fake_get_model_version)
+    monkeypatch.setattr("app.predictions.service.write_prediction_record", fake_write_prediction)
+    monkeypatch.setattr("app.predictions.service.write_prediction_status", fake_write_status)
+
+    record = await generate_prediction_for_candidate(candidate, correlation_id=uuid4())
+
+    assert record is not None
+    assert record.llm_probability is None
+    assert record.pre_cal_probability is None

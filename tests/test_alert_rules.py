@@ -24,6 +24,8 @@ def build_prediction_record(
         prediction_mode=prediction_mode,
         predicted_outcome="up_2pct",
         probability=probability,
+        llm_probability=None,
+        pre_cal_probability=None,
         evidence_summary="Price and sentiment support a short-term rebound.",
         rationale={},
         created_at=created_at,

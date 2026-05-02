@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -213,6 +214,8 @@ async def test_generate_features_for_asset_creates_snapshot(monkeypatch) -> None
     monkeypatch.setattr("app.features.service.get_or_create_feature_set", fake_get_feature_set)
     monkeypatch.setattr("app.features.service.feature_snapshot_exists", fake_exists)
     monkeypatch.setattr("app.features.service.read_price_bars", fake_read_price_bars)
+    monkeypatch.setattr("app.features.service.read_bars_for_symbols", AsyncMock(return_value={}))
+    monkeypatch.setattr("app.features.service.read_calendar_events", AsyncMock(return_value=[]))
     monkeypatch.setattr("app.features.service.write_feature_snapshot", fake_write_snapshot)
     monkeypatch.setattr("app.features.service.write_feature_values", fake_write_values)
     monkeypatch.setattr("app.features.service.write_feature_lineage", fake_write_lineage)

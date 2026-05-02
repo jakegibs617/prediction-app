@@ -37,6 +37,8 @@ async def get_alertable_predictions() -> list[AlertablePrediction]:
                 p.prediction_mode,
                 p.predicted_outcome,
                 p.probability,
+                p.llm_probability,
+                p.pre_cal_probability,
                 p.evidence_summary,
                 p.rationale,
                 p.created_at,
@@ -71,6 +73,10 @@ async def get_alertable_predictions() -> list[AlertablePrediction]:
                 prediction_mode=row["prediction_mode"],
                 predicted_outcome=row["predicted_outcome"],
                 probability=Decimal(row["probability"]),
+                llm_probability=float(row["llm_probability"]) if row["llm_probability"] is not None else None,
+                pre_cal_probability=(
+                    float(row["pre_cal_probability"]) if row["pre_cal_probability"] is not None else None
+                ),
                 evidence_summary=row["evidence_summary"],
                 rationale=row["rationale"],
                 created_at=row["created_at"],

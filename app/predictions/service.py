@@ -11,6 +11,8 @@ from app.db.pool import get_pool
 from app.model_client.factory import get_model_client
 from app.predictions.contracts import DirectionRule, FeatureSnapshot, FeatureValue, PredictionTarget, SettlementRule
 from app.predictions.heuristic import HEURISTIC_MODEL_NAME, HEURISTIC_MODEL_VERSION, generate_heuristic_prediction_input
+from app.predictions.calibration import maybe_apply_calibration
+from app.predictions.ensemble_engine import maybe_blend_with_ensemble
 from app.predictions.llm_engine import (
     LLM_MODEL_NAME,
     LLM_MODEL_VERSION,
@@ -218,9 +220,10 @@ async def write_prediction_record(prediction: PredictionRecord) -> UUID:
             """
             INSERT INTO predictions.predictions
                 (id, target_id, asset_id, feature_snapshot_id, model_version_id, prompt_version_id, prediction_mode,
-                 predicted_outcome, probability, evidence_summary, rationale, created_at, horizon_end_at,
-                 correlation_id, hallucination_risk, probability_extreme_flag, context_compressed, backtest_run_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                 predicted_outcome, probability, llm_probability, pre_cal_probability, evidence_summary, rationale,
+                 created_at, horizon_end_at, correlation_id, hallucination_risk, probability_extreme_flag,
+                 context_compressed, backtest_run_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             RETURNING id
             """,
             prediction.id,
@@ -232,6 +235,8 @@ async def write_prediction_record(prediction: PredictionRecord) -> UUID:
             prediction.prediction_mode,
             prediction.predicted_outcome,
             prediction.probability,
+            prediction.llm_probability,
+            prediction.pre_cal_probability,
             prediction.evidence_summary,
             json.dumps(prediction.rationale),
             prediction.created_at,
@@ -275,6 +280,8 @@ async def generate_prediction_for_candidate(
         return None
 
     issued_at = created_at or get_utc_now()
+    llm_probability: float | None = None
+    pre_cal_probability: float | None = None
 
     # Try LLM engine first; fall back to heuristic on any failure
     try:
@@ -290,7 +297,28 @@ async def generate_prediction_for_candidate(
             correlation_id=correlation_id,
             prediction_mode=prediction_mode,
         )
-        status_reason = "llm prediction issued"
+        llm_probability = prediction_input.probability
+        try:
+            prediction_input = await maybe_blend_with_ensemble(prediction_input)
+        except Exception as blend_exc:
+            log.warning("ensemble_blend_failed", error=str(blend_exc))
+        pre_calibration_candidate = prediction_input.probability
+        try:
+            prediction_input = await maybe_apply_calibration(prediction_input)
+            if prediction_input.rationale.get("calibration_applied", False):
+                pre_cal_probability = pre_calibration_candidate
+        except Exception as cal_exc:
+            log.warning("calibration_apply_failed", error=str(cal_exc))
+        is_blended = "ensemble_probability" in prediction_input.rationale
+        is_calibrated = prediction_input.rationale.get("calibration_applied", False)
+        if is_calibrated and is_blended:
+            status_reason = "ensemble blend + calibrated prediction issued"
+        elif is_calibrated:
+            status_reason = "calibrated prediction issued"
+        elif is_blended:
+            status_reason = "ensemble blend prediction issued"
+        else:
+            status_reason = "llm prediction issued"
     except Exception as exc:
         log.warning("llm_prediction_failed_falling_back", error=str(exc), exc_info=True)
         model_version_id = await get_or_create_model_version()
@@ -305,7 +333,11 @@ async def generate_prediction_for_candidate(
         )
         status_reason = "heuristic fallback prediction issued"
 
-    prediction_record = build_prediction_record(prediction_input)
+    prediction_record = build_prediction_record(
+        prediction_input,
+        llm_probability=llm_probability,
+        pre_cal_probability=pre_cal_probability,
+    )
     await write_prediction_record(prediction_record)
     await write_prediction_status(prediction_record.id, "created", status_reason)
     return prediction_record

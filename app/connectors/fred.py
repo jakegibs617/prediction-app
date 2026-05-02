@@ -43,6 +43,7 @@ TRACKED_SERIES: list[FredSeries] = [
     FredSeries("UNRATE",   "Unemployment Rate",                               "employment"),
     FredSeries("GDP",      "Gross Domestic Product",                          "gdp"),
     FredSeries("DGS10",    "10-Year Treasury Constant Maturity Rate",         "interest_rate"),
+    FredSeries("DGS2",     "2-Year Treasury Constant Maturity Rate",          "interest_rate"),
     FredSeries("T10YIE",   "10-Year Breakeven Inflation Rate",                "inflation"),
     FredSeries("DCOILWTICO", "WTI Crude Oil Price",                           "commodity_price"),
 ]

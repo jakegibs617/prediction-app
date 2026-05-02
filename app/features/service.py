@@ -6,7 +6,14 @@ from datetime import timezone
 from uuid import UUID, uuid4
 
 from app.db.pool import get_pool
-from app.features.engine import PriceBar, build_price_feature_snapshot
+from app.features.engine import (
+    PriceBar,
+    build_price_feature_snapshot,
+    compute_cross_asset_btc_features,
+    compute_rolling_correlations,
+    compute_temporal_features,
+    compute_volume_features,
+)
 from app.predictions.contracts import FeatureSnapshot, FeatureValue
 from app.utils.time import get_utc_now
 
@@ -15,25 +22,56 @@ log = structlog.get_logger(__name__)
 FEATURE_SET_NAME = "price-baseline"
 FEATURE_SET_VERSION = "v1"
 
+BTC_SYMBOL = "BTC/USD"
+# Altcoins that benefit from BTC lead features (BTC itself is excluded).
+_ALTCOIN_SYMBOLS: frozenset[str] = frozenset({"ETH/USD", "SOL/USD", "AVAX/USD", "XRP/USD"})
+
+# Symbols whose price bars are needed to compute cross-asset correlations.
+_CORR_SYMBOLS: frozenset[str] = frozenset({"BTC/USD", "ETH/USD", "SPY", "GLD", "USO"})
+
 # Macro features attached to each price-feature snapshot, keyed by asset_type.
 # Each entry: (source_name, [(series_id, feature_key), ...]).
 # feature_key gets a 'macro__' prefix so it sorts together in the prompt and
 # is unmistakably a macro feature, not a price-derived one.
+_CBOE_OPTIONS_ROUTES: tuple[tuple[str, str], ...] = (
+    ("CBOE_PUT_CALL_TOTAL", "macro__cboe_total_put_call_ratio"),
+    ("CBOE_PUT_CALL_INDEX", "macro__cboe_index_put_call_ratio"),
+    ("CBOE_PUT_CALL_EQUITY", "macro__cboe_equity_put_call_ratio"),
+    ("CBOE_VIX_SPOT_CLOSE", "macro__cboe_vix_spot_close"),
+    ("CBOE_VIX_FRONT_FUTURE_SETTLE", "macro__cboe_vix_front_future_settle"),
+    ("CBOE_VIX_SECOND_FUTURE_SETTLE", "macro__cboe_vix_second_future_settle"),
+    ("CBOE_VIX_FRONT_PREMIUM_TO_SPOT", "macro__cboe_vix_front_premium_to_spot"),
+    ("CBOE_VIX_1M_2M_FUTURES_SLOPE", "macro__cboe_vix_1m_2m_futures_slope"),
+)
+
 _MACRO_FEATURE_ROUTES: dict[str, list[tuple[str, list[tuple[str, str]]]]] = {
     "crypto": [
         ("alternative_me_fear_greed", [("FEAR_GREED", "macro__fear_greed_index")]),
+        ("glassnode", [
+            ("GLASSNODE_EXCHANGE_NETFLOW_NATIVE_BTC", "macro__btc_exchange_netflow_native"),
+            ("GLASSNODE_EXCHANGE_NETFLOW_NATIVE_ETH", "macro__eth_exchange_netflow_native"),
+            ("GLASSNODE_MINERS_OUTFLOW_MULTIPLE_BTC", "macro__btc_miner_outflow_multiple"),
+            ("GLASSNODE_LTH_NET_CHANGE_NATIVE_BTC", "macro__btc_lth_net_change_native"),
+        ]),
+        ("cftc_cot", [
+            ("CFTC_COT_LEVERAGED_FUNDS_NET_BTC_CME", "macro__btc_cme_leveraged_funds_net_contracts"),
+        ]),
         ("fred", [
             ("FEDFUNDS", "macro__fed_funds_rate"),
             ("DGS10", "macro__treasury_10y_yield"),
+            ("DGS2",  "macro__treasury_2y_yield"),
         ]),
+        ("cboe_options", list(_CBOE_OPTIONS_ROUTES)),
     ],
     "equity": [
         ("fred", [
             ("FEDFUNDS", "macro__fed_funds_rate"),
             ("DGS10", "macro__treasury_10y_yield"),
+            ("DGS2",  "macro__treasury_2y_yield"),
             ("T10YIE", "macro__breakeven_inflation_10y"),
             ("UNRATE", "macro__unemployment_rate"),
         ]),
+        ("cboe_options", list(_CBOE_OPTIONS_ROUTES)),
     ],
     "commodity": [
         ("eia", [
@@ -42,19 +80,27 @@ _MACRO_FEATURE_ROUTES: dict[str, list[tuple[str, list[tuple[str, str]]]]] = {
             ("WGTSTUS1", "macro__gasoline_inventory_kbbl"),
             ("NW2_EPG0_SWO_R48_BCF", "macro__natgas_storage_bcf"),
         ]),
+        ("cftc_cot", [
+            ("CFTC_COT_MANAGED_MONEY_NET_GOLD", "macro__gold_managed_money_net_contracts"),
+            ("CFTC_COT_MANAGED_MONEY_NET_WTI_CRUDE", "macro__wti_managed_money_net_contracts"),
+        ]),
         ("fred", [
             # EIA RWTC is weekly; FRED DCOILWTICO is daily — keep both for
             # data-availability redundancy across different update cadences.
             ("DCOILWTICO", "macro__wti_crude_fred"),
             ("DGS10", "macro__treasury_10y_yield"),
+            ("DGS2",  "macro__treasury_2y_yield"),
         ]),
+        ("cboe_options", list(_CBOE_OPTIONS_ROUTES)),
     ],
     "forex": [
         ("fred", [
             ("FEDFUNDS", "macro__fed_funds_rate"),
             ("DGS10", "macro__treasury_10y_yield"),
+            ("DGS2",  "macro__treasury_2y_yield"),
             ("T10YIE", "macro__breakeven_inflation_10y"),
         ]),
+        ("cboe_options", list(_CBOE_OPTIONS_ROUTES)),
     ],
 }
 
@@ -127,7 +173,7 @@ async def read_price_bars(asset_id: UUID, cutoff_time) -> list[PriceBar]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT pb.asset_id, pb.source_id, pb.bar_interval, pb.bar_start_at, pb.bar_end_at, pb.close, a.symbol
+            SELECT pb.asset_id, pb.source_id, pb.bar_interval, pb.bar_start_at, pb.bar_end_at, pb.close, pb.volume, a.symbol
             FROM market_data.price_bars pb
             JOIN market_data.assets a ON a.id = pb.asset_id
             WHERE asset_id = $1
@@ -158,6 +204,10 @@ async def read_price_bars(asset_id: UUID, cutoff_time) -> list[PriceBar]:
                     row["source_id"],
                     external_id,
                 )
+            try:
+                volume = row["volume"]
+            except (KeyError, TypeError):
+                volume = None
             price_bars.append(
                 PriceBar(
                     asset_id=row["asset_id"],
@@ -165,6 +215,7 @@ async def read_price_bars(asset_id: UUID, cutoff_time) -> list[PriceBar]:
                     bar_start_at=row["bar_start_at"],
                     bar_end_at=row["bar_end_at"],
                     close=float(row["close"]),
+                    volume=float(volume) if volume is not None else None,
                 )
             )
     return price_bars
@@ -343,6 +394,114 @@ def build_macro_feature_values(macro_inputs: list[dict]) -> list[FeatureValue]:
     return out
 
 
+def compute_yield_curve_slope(macro_inputs: list[dict]) -> FeatureValue | None:
+    """Derive yield curve slope (10Y − 2Y) from macro_inputs.
+
+    available_at is the later of the two release dates so the feature is never
+    stamped earlier than both underlying values are known.
+    """
+    dgs10 = next((m for m in macro_inputs if m["feature_key"] == "macro__treasury_10y_yield"), None)
+    dgs2  = next((m for m in macro_inputs if m["feature_key"] == "macro__treasury_2y_yield"), None)
+    if dgs10 is None or dgs2 is None:
+        return None
+    return FeatureValue(
+        feature_key="macro__yield_curve_slope",
+        feature_type="numeric",
+        numeric_value=dgs10["numeric_value"] - dgs2["numeric_value"],
+        available_at=max(dgs10["available_at"], dgs2["available_at"]),
+        source_record_ids=[dgs10["source_record_id"], dgs2["source_record_id"]],
+    )
+
+
+# Maps economic_release event subtypes to their feature keys.
+_CALENDAR_SUBTYPES: dict[str, str] = {
+    "fomc": "macro__days_until_next_fomc",
+    "cpi":  "macro__days_until_next_cpi",
+    "ppi":  "macro__days_until_next_ppi",
+    "nfp":  "macro__days_until_next_nfp",
+}
+
+
+async def read_calendar_events(cutoff_time) -> list[dict]:
+    """Return upcoming economic_release events scheduled after cutoff_time.
+
+    Joins to raw_source_records to get ingested_at, which is used as available_at
+    for the derived days_until features so they never exceed the snapshot timestamp.
+    """
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT ne.event_subtype,
+                   ne.event_occurred_at,
+                   ne.source_record_id,
+                   r.ingested_at AS available_at
+            FROM ingestion.normalized_events ne
+            JOIN ingestion.raw_source_records r ON r.id = ne.source_record_id
+            WHERE ne.event_type = 'economic_release'
+              AND ne.event_occurred_at > $1
+            ORDER BY ne.event_occurred_at ASC
+            """,
+            cutoff_time,
+        )
+    return [dict(row) for row in rows]
+
+
+def compute_calendar_features(events: list[dict], cutoff_time) -> list[FeatureValue]:
+    """Compute days_until_next_* from a list of upcoming economic_release events.
+
+    Takes the nearest upcoming occurrence of each tracked subtype. Events must be
+    ordered ASC by event_occurred_at (as returned by read_calendar_events).
+    """
+    next_by_subtype: dict[str, dict] = {}
+    for event in events:
+        subtype = event.get("event_subtype")
+        if subtype not in _CALENDAR_SUBTYPES:
+            continue
+        if subtype not in next_by_subtype:
+            next_by_subtype[subtype] = event
+
+    out: list[FeatureValue] = []
+    for subtype, feature_key in _CALENDAR_SUBTYPES.items():
+        event = next_by_subtype.get(subtype)
+        if event is None:
+            continue
+        days_until = (event["event_occurred_at"] - cutoff_time).total_seconds() / 86400
+        source_id = event.get("source_record_id")
+        out.append(
+            FeatureValue(
+                feature_key=feature_key,
+                feature_type="numeric",
+                numeric_value=round(days_until, 2),
+                available_at=event["available_at"],
+                source_record_ids=[source_id] if source_id is not None else [],
+            )
+        )
+    return out
+
+
+async def read_asset_id_by_symbol(symbol: str) -> UUID | None:
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT id FROM market_data.assets WHERE symbol = $1",
+            symbol,
+        )
+
+
+async def read_bars_for_symbols(symbols: frozenset[str], cutoff_time) -> dict[str, list[PriceBar]]:
+    """Fetch price bars for each symbol, keyed by symbol string."""
+    bars_by_symbol: dict[str, list[PriceBar]] = {}
+    for symbol in symbols:
+        asset_id = await read_asset_id_by_symbol(symbol)
+        if asset_id is None:
+            continue
+        bars = await read_price_bars(asset_id, cutoff_time)
+        if bars:
+            bars_by_symbol[symbol] = bars
+    return bars_by_symbol
+
+
 async def generate_features_for_asset(candidate: FeatureCandidate, *, as_of_at=None) -> FeatureSnapshot | None:
     cutoff_time = as_of_at or get_utc_now()
     feature_set_id = await get_or_create_feature_set()
@@ -373,6 +532,9 @@ async def generate_features_for_asset(candidate: FeatureCandidate, *, as_of_at=N
             )
         if macro_inputs:
             macro_values = build_macro_feature_values(macro_inputs)
+            slope_fv = compute_yield_curve_slope(macro_inputs)
+            if slope_fv is not None:
+                macro_values.append(slope_fv)
             merged = list(snapshot.values) + macro_values
             snapshot = FeatureSnapshot(
                 snapshot_id=snapshot.snapshot_id,
@@ -382,6 +544,77 @@ async def generate_features_for_asset(candidate: FeatureCandidate, *, as_of_at=N
                 feature_set_name=snapshot.feature_set_name,
                 values=sorted(merged, key=lambda v: v.feature_key),
             )
+
+    # Inject BTC lead-return features for crypto altcoins. BTC price action
+    # leads altcoins by 15–60 min, so these are the highest-signal cross-asset
+    # features we can compute without a new data source.
+    if candidate.asset_type == "crypto" and candidate.asset_symbol in _ALTCOIN_SYMBOLS:
+        btc_asset_id = await read_asset_id_by_symbol(BTC_SYMBOL)
+        if btc_asset_id is not None:
+            btc_bars = await read_price_bars(btc_asset_id, cutoff_time)
+            btc_features = compute_cross_asset_btc_features(btc_bars, as_of_at=cutoff_time)
+            if btc_features:
+                snapshot = FeatureSnapshot(
+                    snapshot_id=snapshot.snapshot_id,
+                    asset_id=snapshot.asset_id,
+                    asset_symbol=snapshot.asset_symbol,
+                    as_of_at=snapshot.as_of_at,
+                    feature_set_name=snapshot.feature_set_name,
+                    values=sorted(list(snapshot.values) + btc_features, key=lambda v: v.feature_key),
+                )
+
+    # Calendar features (days until next FOMC/CPI/PPI/NFP) apply to all asset types.
+    calendar_events = await read_calendar_events(cutoff_time)
+    calendar_fvs = compute_calendar_features(calendar_events, cutoff_time)
+    if calendar_fvs:
+        snapshot = FeatureSnapshot(
+            snapshot_id=snapshot.snapshot_id,
+            asset_id=snapshot.asset_id,
+            asset_symbol=snapshot.asset_symbol,
+            as_of_at=snapshot.as_of_at,
+            feature_set_name=snapshot.feature_set_name,
+            values=sorted(list(snapshot.values) + calendar_fvs, key=lambda v: v.feature_key),
+        )
+
+    # Rolling cross-asset correlations — computed on daily closes to handle
+    # different bar granularities (hourly crypto vs. daily equities).
+    corr_bars = await read_bars_for_symbols(_CORR_SYMBOLS, cutoff_time)
+    corr_features = compute_rolling_correlations(corr_bars, as_of_at=cutoff_time)
+    if corr_features:
+        snapshot = FeatureSnapshot(
+            snapshot_id=snapshot.snapshot_id,
+            asset_id=snapshot.asset_id,
+            asset_symbol=snapshot.asset_symbol,
+            as_of_at=snapshot.as_of_at,
+            feature_set_name=snapshot.feature_set_name,
+            values=sorted(list(snapshot.values) + corr_features, key=lambda v: v.feature_key),
+        )
+
+    # Volume-weighted features — volume column is populated by Alpha Vantage bars;
+    # gracefully skipped when volume data is absent.
+    volume_fvs = compute_volume_features(price_bars, as_of_at=cutoff_time)
+    if volume_fvs:
+        snapshot = FeatureSnapshot(
+            snapshot_id=snapshot.snapshot_id,
+            asset_id=snapshot.asset_id,
+            asset_symbol=snapshot.asset_symbol,
+            as_of_at=snapshot.as_of_at,
+            feature_set_name=snapshot.feature_set_name,
+            values=sorted(list(snapshot.values) + volume_fvs, key=lambda v: v.feature_key),
+        )
+
+    # Temporal and regime features — day of week, realized volatility, and
+    # mean-reversion timing from the last large move.
+    temporal_fvs = compute_temporal_features(price_bars, as_of_at=cutoff_time)
+    if temporal_fvs:
+        snapshot = FeatureSnapshot(
+            snapshot_id=snapshot.snapshot_id,
+            asset_id=snapshot.asset_id,
+            asset_symbol=snapshot.asset_symbol,
+            as_of_at=snapshot.as_of_at,
+            feature_set_name=snapshot.feature_set_name,
+            values=sorted(list(snapshot.values) + temporal_fvs, key=lambda v: v.feature_key),
+        )
 
     await write_feature_snapshot(snapshot, feature_set_id=feature_set_id)
     await write_feature_values(snapshot)

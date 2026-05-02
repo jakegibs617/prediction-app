@@ -107,11 +107,19 @@ async def test_read_macro_feature_inputs_returns_empty_for_unknown_asset_type(mo
 async def test_read_macro_feature_inputs_skips_invalid_values(monkeypatch) -> None:
     now = datetime(2026, 4, 25, tzinfo=timezone.utc)
     src_id = uuid4()
-    # Crypto routes 3 series: FEAR_GREED (good), FEDFUNDS (good), DGS10 (bad value)
+    # Crypto routes: FEAR_GREED, four Glassnode series, COT, then FRED rates.
+    # Model missing Glassnode records as None so the FRED rows land in the
+    # same positions they would with a partially populated database.
     fetchrow_results = [
         {"source_record_id": src_id, "value_text": "31", "available_at": now},
+        None,
+        None,
+        None,
+        None,
+        None,
         {"source_record_id": src_id, "value_text": "3.64", "available_at": now},
         {"source_record_id": src_id, "value_text": ".", "available_at": now},
+        None,
     ]
     conn = _FakeConn(fetchrow_results)
     monkeypatch.setattr(service, "get_pool", lambda: _FakePool(conn))
@@ -208,6 +216,8 @@ async def test_generate_features_for_asset_merges_macro_values(monkeypatch) -> N
     monkeypatch.setattr(service, "feature_snapshot_exists", AsyncMock(return_value=False))
     monkeypatch.setattr(service, "read_price_bars", AsyncMock(return_value=[price_bar]))
     monkeypatch.setattr(service, "read_macro_feature_inputs", AsyncMock(return_value=[macro_input]))
+    monkeypatch.setattr(service, "read_bars_for_symbols", AsyncMock(return_value={}))
+    monkeypatch.setattr(service, "read_calendar_events", AsyncMock(return_value=[]))
     monkeypatch.setattr(service, "write_feature_snapshot", AsyncMock())
     monkeypatch.setattr(service, "write_feature_values", AsyncMock())
     monkeypatch.setattr(service, "write_feature_lineage", AsyncMock())
@@ -238,6 +248,8 @@ async def test_generate_features_for_asset_writes_snapshot_when_macro_empty(monk
     monkeypatch.setattr(service, "feature_snapshot_exists", AsyncMock(return_value=False))
     monkeypatch.setattr(service, "read_price_bars", AsyncMock(return_value=[price_bar]))
     monkeypatch.setattr(service, "read_macro_feature_inputs", AsyncMock(return_value=[]))
+    monkeypatch.setattr(service, "read_bars_for_symbols", AsyncMock(return_value={}))
+    monkeypatch.setattr(service, "read_calendar_events", AsyncMock(return_value=[]))
     monkeypatch.setattr(service, "write_feature_snapshot", mock_write_snapshot)
     monkeypatch.setattr(service, "write_feature_values", AsyncMock())
     monkeypatch.setattr(service, "write_feature_lineage", AsyncMock())

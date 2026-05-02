@@ -1,4 +1,4 @@
-"""Tests for _check_evidence_grounding — specifically the macro_rows path."""
+"""Tests for _check_evidence_grounding and calibration helpers."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -6,7 +6,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.predictions.llm_engine import _check_evidence_grounding
+from app.predictions.llm_engine import (
+    _build_calibration_block,
+    _check_evidence_grounding,
+    _compute_macro_yield_curve_slope,
+)
 from app.predictions.contracts import FeatureSnapshot
 
 
@@ -63,3 +67,77 @@ def test_empty_macro_rows_does_not_affect_feature_grounding() -> None:
 
     evidence = "RSI is at 62.5, approaching overbought territory."
     assert not _check_evidence_grounding(evidence, snap, macro_rows=[])
+
+
+# --- _build_calibration_block ---
+
+def test_calibration_block_empty_stats_returns_no_history_message() -> None:
+    assert "No settled" in _build_calibration_block({})
+    assert "No settled" in _build_calibration_block({"total_evaluated": 0})
+
+
+def test_calibration_block_formats_accuracy_and_confidence() -> None:
+    stats = {
+        "total_evaluated": 20,
+        "correct_count": 13,
+        "avg_probability": 0.72,
+        "avg_brier_score": 0.2345,
+    }
+    block = _build_calibration_block(stats)
+    assert "20" in block
+    assert "65.0%" in block   # 13/20 * 100
+    assert "72.0%" in block   # avg_probability * 100
+    assert "0.2345" in block
+
+
+def test_calibration_block_handles_missing_optional_fields() -> None:
+    stats = {"total_evaluated": 5, "correct_count": 3, "avg_probability": None, "avg_brier_score": None}
+    block = _build_calibration_block(stats)
+    assert "60.0%" in block   # 3/5 * 100
+    assert "avg stated confidence" not in block
+    assert "Brier" not in block
+
+
+# --- calibration grounding ---
+
+# --- _compute_macro_yield_curve_slope ---
+
+def test_yield_curve_slope_computed_correctly() -> None:
+    rows = [
+        {"series_id": "DGS10", "value": "4.50", "observation_date": "2026-04-30"},
+        {"series_id": "DGS2",  "value": "4.20", "observation_date": "2026-04-30"},
+    ]
+    result = _compute_macro_yield_curve_slope(rows)
+    assert result is not None
+    assert result["series_id"] == "YIELD_CURVE_SLOPE"
+    assert abs(float(result["value"]) - 0.30) < 1e-9
+
+
+def test_yield_curve_slope_missing_leg_returns_none() -> None:
+    rows = [{"series_id": "DGS10", "value": "4.50", "observation_date": "2026-04-30"}]
+    assert _compute_macro_yield_curve_slope(rows) is None
+
+
+def test_yield_curve_slope_grounded_in_evidence() -> None:
+    rows = [
+        {"series_id": "DGS10", "value": "4.50", "observation_date": "2026-04-30"},
+        {"series_id": "DGS2",  "value": "4.20", "observation_date": "2026-04-30"},
+        {"series_id": "YIELD_CURVE_SLOPE", "value": "0.3000", "observation_date": "2026-04-30",
+         "series_name": "Yield Curve Slope (10Y − 2Y)", "units": "%", "source_name": "computed"},
+    ]
+    evidence = "The yield curve slope is 0.30 percentage points, indicating a mildly positive term premium."
+    assert not _check_evidence_grounding(evidence, _empty_snapshot(), macro_rows=rows)
+
+
+def test_calibration_values_are_grounded_and_do_not_flag() -> None:
+    calibration_stats = {
+        "total_evaluated": 20,
+        "correct_count": 13,
+        "avg_probability": 0.72,
+        "avg_brier_score": 0.2345,
+    }
+    # LLM quotes calibration-derived numbers in evidence
+    evidence = "Recent accuracy for this target is 65.0% over 20 settled predictions."
+    assert not _check_evidence_grounding(
+        evidence, _empty_snapshot(), calibration_stats=calibration_stats
+    )

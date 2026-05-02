@@ -56,6 +56,33 @@ class LLMPredictionOutput(BaseModel):
     hallucination_risk: bool = False
 
 
+def _corr_regime_label(r: float) -> str:
+    direction = "positive" if r >= 0 else "negative"
+    abs_r = abs(r)
+    if abs_r >= 0.7:
+        return f"high {direction}"
+    if abs_r >= 0.4:
+        return f"moderate {direction}"
+    return f"low {direction}"
+
+
+def _build_correlation_block(snapshot: FeatureSnapshot) -> str:
+    """Format cross_asset__corr_* features as human-readable regime summaries."""
+    corr_features = [v for v in snapshot.values if v.feature_key.startswith("cross_asset__corr_")]
+    if not corr_features:
+        return ""
+    lines: list[str] = []
+    for v in sorted(corr_features, key=lambda x: x.feature_key):
+        # key: cross_asset__corr_{slug_a}_{slug_b}_{window}
+        suffix = v.feature_key.removeprefix("cross_asset__corr_")
+        parts = suffix.split("_")
+        window = parts[-1]                      # "7d" or "30d"
+        pair = "_".join(parts[:-1]).upper()     # e.g. "BTC_ETH"
+        regime = _corr_regime_label(v.numeric_value)
+        lines.append(f"  {pair} {window} correlation: {v.numeric_value:.2f} ({regime})")
+    return "\n".join(lines)
+
+
 def _build_feature_block(snapshot: FeatureSnapshot) -> str:
     lines = [f"Asset: {snapshot.asset_symbol}", f"Snapshot as-of: {snapshot.as_of_at.isoformat()}"]
     for v in snapshot.values:
@@ -63,6 +90,8 @@ def _build_feature_block(snapshot: FeatureSnapshot) -> str:
             lines.append(f"  {v.feature_key}: {v.numeric_value:.6f}")
         elif v.text_value:
             lines.append(f"  {v.feature_key}: {v.text_value[:200]}")
+        elif v.boolean_value is not None:
+            lines.append(f"  {v.feature_key}: {v.boolean_value}")
     return "\n".join(lines)
 
 
@@ -123,6 +152,7 @@ def _check_evidence_grounding(
     target=None,
     events: list[dict] | None = None,
     macro_rows: list[dict] | None = None,
+    calibration_stats: dict | None = None,
 ) -> bool:
     """Flag if the evidence mentions numbers that aren't grounded in the
     inputs: feature snapshot, target rule, or the events block.
@@ -168,6 +198,21 @@ def _check_evidence_grounding(
         except (TypeError, ValueError):
             continue
 
+    # Calibration block values (derived stats shown in the prompt).
+    # Pass raw fractions so _numeric_variants generates the correct % forms
+    # (e.g. 0.65 → "65.0%"), matching how the LLM may re-render them.
+    cs = calibration_stats or {}
+    if cs.get("total_evaluated", 0) > 0:
+        total = cs["total_evaluated"]
+        correct = cs.get("correct_count", 0)
+        grounded.update(_numeric_variants(total))
+        grounded.update(_numeric_variants(correct))
+        grounded.update(_numeric_variants(correct / total))
+        if cs.get("avg_probability") is not None:
+            grounded.update(_numeric_variants(cs["avg_probability"]))
+        if cs.get("avg_brier_score") is not None:
+            grounded.update(_numeric_variants(cs["avg_brier_score"]))
+
     # Anything 1-2 chars (e.g. '0', '5', '24') is too low-signal to flag
     suspicious = [
         n for n in numeric_in_evidence
@@ -185,17 +230,25 @@ def _check_evidence_grounding(
 _MACRO_CONTEXT_BY_ASSET_TYPE: dict[str, list[tuple[str, list[str]]]] = {
     "crypto": [
         ("alternative_me_fear_greed", ["FEAR_GREED"]),
-        ("fred", ["FEDFUNDS", "DGS10"]),
+        ("glassnode", [
+            "GLASSNODE_EXCHANGE_NETFLOW_NATIVE_BTC",
+            "GLASSNODE_EXCHANGE_NETFLOW_NATIVE_ETH",
+            "GLASSNODE_MINERS_OUTFLOW_MULTIPLE_BTC",
+            "GLASSNODE_LTH_NET_CHANGE_NATIVE_BTC",
+        ]),
+        ("cftc_cot", ["CFTC_COT_LEVERAGED_FUNDS_NET_BTC_CME"]),
+        ("fred", ["FEDFUNDS", "DGS10", "DGS2"]),
     ],
     "equity": [
-        ("fred", ["FEDFUNDS", "DGS10", "T10YIE", "UNRATE"]),
+        ("fred", ["FEDFUNDS", "DGS10", "DGS2", "T10YIE", "UNRATE"]),
     ],
     "commodity": [
         ("eia", ["RWTC", "WCESTUS1", "WGTSTUS1", "NW2_EPG0_SWO_R48_BCF"]),
-        ("fred", ["DCOILWTICO", "DGS10"]),
+        ("cftc_cot", ["CFTC_COT_MANAGED_MONEY_NET_GOLD", "CFTC_COT_MANAGED_MONEY_NET_WTI_CRUDE"]),
+        ("fred", ["DCOILWTICO", "DGS10", "DGS2"]),
     ],
     "forex": [
-        ("fred", ["FEDFUNDS", "DGS10", "T10YIE"]),
+        ("fred", ["FEDFUNDS", "DGS10", "DGS2", "T10YIE"]),
     ],
 }
 
@@ -270,6 +323,30 @@ def _build_macro_block(macro_rows: list[dict]) -> str:
     return "\n".join(lines) if lines else "No macro context available for this asset type."
 
 
+def _compute_macro_yield_curve_slope(macro_rows: list[dict]) -> dict | None:
+    """Return a synthetic macro row for yield curve slope (10Y − 2Y), or None
+    if either leg is absent. Appended to macro_rows so the LLM sees the derived
+    value and the grounding check can validate any number it quotes."""
+    dgs10 = next((r for r in macro_rows if r.get("series_id") == "DGS10"), None)
+    dgs2  = next((r for r in macro_rows if r.get("series_id") == "DGS2"), None)
+    if dgs10 is None or dgs2 is None:
+        return None
+    try:
+        slope = float(dgs10["value"]) - float(dgs2["value"])
+    except (TypeError, ValueError):
+        return None
+    return {
+        "series_id": "YIELD_CURVE_SLOPE",
+        "series_name": "Yield Curve Slope (10Y − 2Y)",
+        "subtype": "interest_rate",
+        "observation_date": dgs10.get("observation_date") or dgs2.get("observation_date") or "",
+        "value": f"{slope:.4f}",
+        "units": "%",
+        "classification": None,
+        "source_name": "computed",
+    }
+
+
 async def fetch_relevant_events(asset_type: str, asset_symbol: str, limit: int = 15) -> list[dict]:
     keywords = _ASSET_TYPE_KEYWORDS.get(asset_type, set())
     symbol_root = asset_symbol.split("/")[0].lower()
@@ -312,6 +389,58 @@ async def fetch_relevant_events(asset_type: str, asset_symbol: str, limit: int =
     return results
 
 
+async def fetch_calibration_context(target_id: UUID, limit: int = 20) -> dict:
+    """Return directional-accuracy stats over the last `limit` evaluated predictions for this target."""
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            WITH recent AS (
+                SELECT p.probability, er.directional_correct, er.brier_score
+                FROM predictions.predictions p
+                JOIN evaluation.evaluation_results er ON er.prediction_id = p.id
+                WHERE p.target_id = $1
+                  AND er.evaluation_state = 'evaluated'
+                ORDER BY p.created_at DESC
+                LIMIT $2
+            )
+            SELECT
+                COUNT(*)::int                                               AS total_evaluated,
+                SUM(CASE WHEN directional_correct THEN 1 ELSE 0 END)::int  AS correct_count,
+                AVG(probability::float)                                     AS avg_probability,
+                AVG(brier_score)                                            AS avg_brier_score
+            FROM recent
+            """,
+            target_id,
+            limit,
+        )
+    if row is None or row["total_evaluated"] == 0:
+        return {}
+    return {
+        "total_evaluated": row["total_evaluated"],
+        "correct_count": row["correct_count"],
+        "avg_probability": float(row["avg_probability"]) if row["avg_probability"] is not None else None,
+        "avg_brier_score": float(row["avg_brier_score"]) if row["avg_brier_score"] is not None else None,
+    }
+
+
+def _build_calibration_block(stats: dict) -> str:
+    if not stats or stats.get("total_evaluated", 0) == 0:
+        return "No settled predictions yet for this target — no calibration history available."
+    total = stats["total_evaluated"]
+    correct = stats.get("correct_count", 0)
+    accuracy_pct = round(correct / total * 100, 1)
+    avg_prob_pct = round(stats["avg_probability"] * 100, 1) if stats.get("avg_probability") is not None else None
+    avg_brier = round(stats["avg_brier_score"], 4) if stats.get("avg_brier_score") is not None else None
+
+    parts = [f"Last {total} settled predictions: {accuracy_pct}% directional accuracy"]
+    if avg_prob_pct is not None:
+        parts.append(f"avg stated confidence {avg_prob_pct}%")
+    if avg_brier is not None:
+        parts.append(f"avg Brier score {avg_brier}")
+    return ", ".join(parts) + "."
+
+
 async def get_or_create_llm_model_version(model_name: str, model_version: str) -> UUID:
     pool = get_pool()
     async with pool.acquire() as conn:
@@ -347,17 +476,29 @@ async def generate_llm_prediction_input(
 ) -> PredictionInput:
     events = await fetch_relevant_events(asset_type, snapshot.asset_symbol)
     macro_rows = await fetch_macro_context(asset_type)
+    slope_row = _compute_macro_yield_curve_slope(macro_rows)
+    if slope_row is not None:
+        macro_rows = [*macro_rows, slope_row]
+    calibration_stats = await fetch_calibration_context(target.id)
 
     feature_block = _build_feature_block(snapshot)
     target_block = _build_target_block(target)
     events_block = _build_events_block(events)
     macro_block = _build_macro_block(macro_rows)
+    calibration_block = _build_calibration_block(calibration_stats)
+    correlation_block = _build_correlation_block(snapshot)
 
+    corr_section = (
+        f"\n\n=== CROSS-ASSET CORRELATION REGIME ===\n{correlation_block}"
+        if correlation_block else ""
+    )
     user_message = (
         f"=== PREDICTION TARGET ===\n{target_block}\n\n"
         f"=== FEATURE DATA (use ONLY these numbers) ===\n{feature_block}\n\n"
         f"=== MACRO CONTEXT (latest released values) ===\n{macro_block}\n\n"
-        f"=== RELEVANT RECENT EVENTS ===\n{events_block}\n\n"
+        f"=== CALIBRATION HISTORY ===\n{calibration_block}\n\n"
+        f"=== RELEVANT RECENT EVENTS ===\n{events_block}"
+        f"{corr_section}\n\n"
         "Generate a probability estimate and evidence summary for this prediction target."
     )
 
@@ -371,7 +512,12 @@ async def generate_llm_prediction_input(
     probability = max(0.05, min(0.95, output.probability))
     probability_extreme = probability < 0.05 or probability > 0.95
     hallucination_risk = output.hallucination_risk or _check_evidence_grounding(
-        output.evidence_summary, snapshot, target=target, events=events, macro_rows=macro_rows
+        output.evidence_summary,
+        snapshot,
+        target=target,
+        events=events,
+        macro_rows=macro_rows,
+        calibration_stats=calibration_stats,
     )
 
     log.info(
@@ -400,8 +546,15 @@ async def generate_llm_prediction_input(
         rationale={
             "feature_count": len(snapshot.values),
             "macro_feature_count": sum(1 for v in snapshot.values if v.feature_key.startswith("macro__")),
+            "cross_asset_feature_count": sum(1 for v in snapshot.values if v.feature_key.startswith("cross_asset__")),
             "event_count": len(events),
             "macro_count": len(macro_rows),
+            "calibration_total_evaluated": calibration_stats.get("total_evaluated", 0),
+            "calibration_directional_accuracy": (
+                round(calibration_stats["correct_count"] / calibration_stats["total_evaluated"], 4)
+                if calibration_stats.get("total_evaluated", 0) > 0
+                else None
+            ),
             "features_omitted": 0,
             "compression_type": None,
             "evidence_grounding_ok": not hallucination_risk,
